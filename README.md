@@ -39,11 +39,11 @@ NOTE: The on-screen reported delays after the end of simulation are in cycles wh
 ### Input Files to ASTRA-sim ###
 
 * Workload: workload/workload_inputs/
-      * see workload_inputs/README.md
+   * see workload_inputs/README.md
 * System: system/system_inputs/
-      * see system_inputs/README.md
+   * see system_inputs/README.md
 * Network: gem5/network_inputs/
-      * see network_inputs/README.md
+   * see network_inputs/README.md
 
 ### Contact ###
 Please email Saeed Rashidi (saeed.rashidi@gatech.edu) if you have any questions.
