@@ -1,6 +1,8 @@
 scheduling-policy: LIFO 
 endpoint-delay: 10
-links-per-tile: 1
+local-rings: 2
+vertical-rings: 2
+horizontal-rings: 2
 packet-routing: software
 injection-policy: normal
 preferred-dataset-splits: 4
