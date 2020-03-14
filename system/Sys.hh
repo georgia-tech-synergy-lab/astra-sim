@@ -397,48 +397,15 @@ class LogicalTopology;
 class VnetInfo{
     public:
         Sys *generator;
-        std::string direction;
-        int burst;
-        int flits;
-        int dest_node;
-        int sender_node;
-        int parallel_reduce;
-        int processing_latency;
-        int nodes_in_vnet;
-        int communication_delay;
-        int packets_per_message;
         int vnet_num;
-        int message_size;
         int initial_data_size;
         int final_data_size;
-        int packet_size;
         bool enabled;
         ComType comm_type;
         Algorithm *algorithm;
-        InjectionPolicy injectionPolicy;
-        PacketRouting packetRouting;
-        VnetInfo(Sys *generator,std::string direction,int vnet_num,int burst,int flits,int dest_node,int parallel_reduce,int processing_latency, int nodes_in_vnet, int communication_delay,
-                 int packets_per_message,int message_size,bool enabled);
         VnetInfo(Sys *generator,int Vnet_num,Algorithm *algorithm);
         VnetInfo();
-        void init();
         void init(BaseStream *stream);
-        void adjust_message_size(int size);
-        int clone_for_all_reduce(int size_of_stream);
-        int clone_for_exhange(int size_of_stream);
-        int clone_for_reduction(int size_of_stream);
-        int clone_for_reduce_scatter(int size_of_stream);
-        int clone_for_all_to_all_on_torus(int size_of_stream,PacketRouting rounting,InjectionPolicy ip);
-        int clone_for_all_to_all_on_alltoall(int size_of_stream);
-        int clone_for_all_reduce_single_on_alltoall(int size_of_stream);
-        int clone_for_all_reduce_single_on_torus(int size_of_stream);
-        //int clone_for_all_reduce_single_on_tree(int size_of_stream);
-        int clone_for_reduce_scatter_single_on_alltoall(int size_of_stream);
-        int clone_for_reduce_scatter_single_on_torus(int size_of_stream);
-        int clone_for_all_gather(int size_of_stream);
-        int clone_for_all_gather_single_on_alltoall(int size_of_stream);
-        int clone_for_all_gather_single_on_torus(int size_of_stream);
-        void makeSinglePacketFLit();
 };
 class DMA_Request{
 public:
@@ -451,189 +418,6 @@ public:
     DMA_Request(int id,int slots,int latency,int bytes);
     DMA_Request(int id,int slots,int latency,int bytes,Callable *stream_owner);
 };
-/*class MessageSlot
-{
-public:
-    int PACKET_SLOTS;
-    std::vector<int> filled;
-    MessageSlot(int slots);
-    bool write_packet(int stream_num);
-    bool is_accessible(int stream_num);
-    bool remove_packet(int stream_num);
-};
-class FIFO:public Callable
-{
-public:
-    int id;
-    int SIZE;
-    int PACKETS_PER_SLOT;
-    int DMA_SLOT_LATENCY;
-    int ACCESS_LATENCY;
-    bool has_TX_DMA;
-    bool has_express_out;
-    bool has_RX_DMA;
-    bool read_port_free;
-    bool write_port_free;
-    int PACKET_SIZE;
-    Sys *generator;
-    Tick last_read;
-    std::list<MessageSlot> filled;
-    std::list<DMA_Request> TX_Requests;
-
-    std::list<std::pair<int,int>> reserve_requests;
-    int reserved;
-
-    std::list<DMA_Request> RX_Requests;
-
-    int reserved_packets;
-    int total_free_packet_slots;
-    virtual void request_reserve(int stream_id,int packets);
-    int get_reserve_owner();
-    virtual bool is_allowed_to_write(int id);
-    void remove_head_reserve_request();
-    bool ask_for_packet_write(int id);
-    bool is_free_to_write();
-    virtual bool write_packet(int stream_num);
-    virtual bool is_accessible(int stream_num);
-    virtual bool remove_packet(int stream_num);
-
-    FIFO(Sys *generator,int id,int SIZE,int PACKET_SIZE,int PACKETS_PER_SLOT,int DMA_SLOT_LATENCY, bool has_TX_DMA,bool has_express_out,bool has_RX_DMA);
-    virtual void request_TX_DMA(int id,Callable *callable,int bytes);
-    void request_RX_DMA(int id,Callable *stream,int bytes);
-    virtual bool has_space(int slots);
-    virtual bool has_packet_space();
-    virtual bool acquire_packet_space();
-    virtual void instant_write(int streamm_num,int bytes);
-    virtual void instant_read(int streamm_num,int bytes);
-    virtual void process_TX_request(SharedBusStat *mdata);
-    virtual void process_RX_request(SharedBusStat *mdata);
-    void call(EventType event,CallData *data);
-};
-class RAM:public FIFO{
-public:
-    std::map<int,int> ram;
-    int TOTAL_PACKETS;
-    RAM(Sys *generator,int id,int SIZE,int PACKET_SIZE,int PACKETS_PER_SLOT,int DMA_SLOT_LATENCY,
-        bool has_TX_DMA,bool has_express_out,bool has_RX_DMA);
-    bool is_allowed_to_write(int id);
-    bool acquire_packet_space();
-    void request_reserve(int stream_id,int packets);
-    bool write_packet(int stream_num);
-    bool is_accessible(int stream_num);
-    bool remove_packet(int stream_num);
-    void request_TX_DMA(int id,Callable *callable,int bytes);
-    bool has_packet_space();
-    bool has_space(int slots);
-    void instant_write(int streamm_num,int bytes);
-    void instant_read(int streamm_num,int bytes);
-    void process_TX_request(SharedBusStat *mdata);
-    void process_RX_request(SharedBusStat *mdata);
-};
-class FIFOReduction
-{
-public:
-    std::list<FIFOMovement*> src;
-    FIFOMovement *dst;
-    int packets;
-    int st_num;
-    int my_vnet;
-    std::list<int> vnets_to_check;
-    std::list<FIFOMovement*>::iterator index;
-    FIFOReduction(std::list<FIFOMovement*> src,FIFOMovement *dst,int packets,int st_num,
-                  int my_vnet, std::list<int> vnets_to_check);
-};
-class ALU:public Callable
-{
-public:
-    //bool busy;
-    int id;
-    int remaining;
-    int LATENCY;
-    int forward_vnet;
-    ALUState current_State;
-    MyPacket *owner;
-    NetworkInterface *ni;
-    Sys *generator;
-    Stream *my_stream;
-    std::list<FIFOReduction> reductions;
-    Tick local_timeStamp;
-
-    static Tick global_utilization;
-    static int total_ALUs;
-
-    static void report();
-    //void register
-    ALU(int id,Sys *generator,int LATENCY);
-    bool is_busy();
-    bool acquire_for_reduction(std::list<FIFOMovement*> src,FIFOMovement *dst,int packets,int st_num,
-                               int my_vnet,std::list<int> vnets_to_check);
-    bool acquire_for_forward(MyPacket *owner,int vnet);
-    bool acquire_for_writeback(MyPacket *owner);
-    bool acquire_for_forward_writeback(MyPacket *owner,int vnet);
-    void call(EventType event,CallData *data);
-};
-class BackwardLink:public Callable
-{
-public:
-    int id;
-    bool busy;
-    //int remaining;
-    int LATENCY;
-    FIFO* dest;
-    int stream_num;
-    MyPacket* owner;
-    bool del;
-    Tick local_timeStamp;
-    Sys *generator;
-    static Tick global_utilization;
-    static int total_links;
-
-    static void report();
-    BackwardLink(Sys* generator,int id,int LATENCY);
-    bool acquire(MyPacket *owner);
-    bool is_busy();
-    bool acquire_and_delete(MyPacket *owner);
-    void call(EventType event,CallData *data);
-
-
-};
-class FIFOMovement
-{
-public:
-    int id;
-    FIFO *source;
-    FIFO *current_dest;
-    std::vector<FIFO*> destinations;
-    int dest_pointer;
-    int read_burst;
-    int change_read;
-    //int receive_burst;
-    int nodes_in_vnet;
-    int input_packets;
-    ComType type;
-    Sys *owner;
-    int stream_num;
-    //int BURSTMAX;
-    int accepted_messages;
-    ALU *tempALU;
-    BackwardLink *tempLink;
-    Stream *my_stream;
-    int packets_per_message;
-    bool initialized;
-    bool report;
-    int test;
-    int test2;
-    int all_to_all_packets_to_receive;
-    FIFOMovement(int id,Stream *my_stream,FIFO *source,std::vector<FIFO*> destinations);
-    void init() ;
-    FIFO* get_next_dest();
-    void process_next_read_burst();
-    void process_next_read_burst(int reduction);
-    bool is_finished();
-    bool ready(int vnet);
-    std::list<int> vnets_to_find;
-
-};*/
 class BaseStream:public Callable,public  StreamStat{
 public:
     static std::map<int,int> synchronizer;
@@ -641,9 +425,7 @@ public:
     static std::map<int,std::list<BaseStream *>> suspended_streams;
     virtual ~BaseStream()=default;
     int stream_num;
-    int stream_count;
     int total_packets_sent;
-    int packet_num;
     SchedulingPolicy preferred_scheduling;
     //std::vector<ComType> com_types;
     std::list<VnetInfo> vnets_to_go;
@@ -657,11 +439,9 @@ public:
     DataSet *dataset;
     int steps_finished;
     int initial_data_size;
-    int not_delivered;
     StreamState state;
 
     Tick last_vnet_change;
-    bool data_collected;
 
     int test;
     int test2;
@@ -670,7 +450,6 @@ public:
     void changeState(StreamState state);
     virtual void consume(RecvPacketEventHadndlerData *message)=0;
     virtual void init()=0;
-    virtual void search_for_early_packets();
 
     BaseStream(int stream_num,Sys *owner,std::list<VnetInfo> vnets_to_go);
     void declare_ready();
@@ -700,32 +479,12 @@ public:
 class StreamBaseline: public BaseStream
 {
 public:
-
-    int max_count;
-    int zero_latency_packets;
-    int non_zero_latency_packets;
     std::list<MyPacket> packets;
-    bool finished_packet_received;
-    int switch_delay;
     Tick final_compute;
     std::map<int,int> alltoall_synchronizer;
     bool initialized;
-    bool toggle;
-    //Callable *communicator;
-    //bool in_progress;
-    /*~StreamBaseline(){
-        if(owner->id==0){
-            std::map<int,int>::iterator it;
-            it=synchronizer.find(stream_num);
-            synchronizer.erase(it);
-            ready_counter.erase(stream_num);
-        }
-    }*/
-    int remained_packets_per_message;
-    int remained_packets_per_max_count;
 
     std::list<MyPacket*> locked_packets;
-    long free_packets;
 
     bool processed;
     bool send_back;
@@ -737,39 +496,6 @@ public:
     void consume(RecvPacketEventHadndlerData *message);
     //~StreamBaseline()= default;
 };
-
-/*class Stream:public BaseStream
-{
-public:
-
-    ~Stream(){
-        synchronizer[stream_num]--;
-        if(synchronizer[stream_num]==0){
-            std::map<int,int>::iterator it;
-            it=synchronizer.find(stream_num);
-            synchronizer.erase(it);
-            ready_counter.erase(stream_num);
-        }
-    }
-    //variables for the proposed architecture
-    std::vector<FIFO*> FIFOs_to_go;
-    std::list<MyPacket*> myPackets;
-    std::list<FIFOMovement> FIFO_movements;
-    std::list<FIFOMovement> finished_FIFO_movements;
-    int remained_packets_from_message;
-
-
-    void search_for_early_packets();
-    void process_next_dest();
-    Stream(Sys *owner,DataSet *dataset,int stream_num,std::list<VnetInfo> vnets_to_go);
-    void call(EventType event,CallData *data);
-    void reduce();
-    void accept_packet(MyPacket *packet);
-    bool iteratable();
-    void consume_only(RecvPacketEventHadndlerData *message);
-    void consume(RecvPacketEventHadndlerData *message);
-    bool ready();
-};*/
 
 #include "Workload.hh"
 class VnetLevels;
@@ -830,12 +556,10 @@ public:
 
     int preferred_dataset_splits;
     PacketRouting alltoall_routing;
-    InjectionPolicy alltoall_injection_policy;
+    InjectionPolicy injection_policy;
     float compute_scale;
     float comm_scale;
     int local_reduction_delay;
-    std::map<int,int> myAllToAllVnet;
-    std::map<int,int> myAllToAlldest;
     uint64_t pending_events;
 
     int workload_event_index;
@@ -844,47 +568,25 @@ public:
     Workload *workload;
     MemBus *memBus;
     int all_vnets;
-    std::map<int,std::vector<RecvPacketEventHadndlerData*>> earlyPackets;
     //for supporting LIFO
     std::list<BaseStream*> ready_list;
     SchedulingPolicy scheduling_policy;
     int first_phase_streams;
     std::map<int,std::list<BaseStream*>> active_Streams;
     std::map<int,std::list<int>> stream_priorities;
-    std::map<int,VnetInfo*> vnet_info;
-    //std::map<int,std::vector<FIFO>> FIFOs;
-    //std::vector<RAM> RAMs;
     std::map<int,int> FIFO_allocator;
-    int RAM_allocator;
-    //std::vector<ALU> ALUs;
-    //std::vector<BackwardLink> BackwardLinks;
+
     VnetLevels *vLevels;
     std::map<std::string,LogicalTopology*> logical_topologies;
     std::map<Tick,std::list<std::tuple<Callable*,EventType,CallData *>>> event_queue;
-    //int event_queue_size;
-    static std::vector<std::vector<Sys*>> masked_generators;
-    std::map<int,int> stream_change_history;
     static int total_nodes;
     static Tick offset;
-    static Tick increase;
-    static Tick last_tick;
-    static Tick min_boost;
-    static int requester_counter;
     static std::vector<Sys*> all_generators;
     static uint8_t *dummy_data;
     //for reports
     uint64_t streams_injected;
     uint64_t streams_finished;
-    static uint64_t streams_time;
-    static uint64_t phase_latencies[10];
-    int local_allocator_first;
-    int local_allocator_last;
-    int vertical_allocator;
-    int horizontal_allocator;
-    int perpendicular_allocator;
-    int fourth_allocator;
     int stream_counter;
-    int ALU_reduction_allocator;
     bool enabled;
 
 
@@ -901,42 +603,24 @@ public:
     bool model_shared_bus;
     int inp_boost_mode;
 
-
-    int total_FIFO_size;
-    int RAM_size;
-
     void register_for_finished_stream(Callable *callable);
     void increase_finished_streams(int amount);
     void register_event(Callable *callable,EventType event,CallData *callData,int cycles);
     void insert_into_ready_list(BaseStream *stream);
     void ask_for_schedule();
     void schedule(int num);
-    //ALU *get_next_ALU();
-    //BackwardLink *get_next_BackwardLink();
-    //for boosting simulation speed
+
+
     void register_vnets(BaseStream *stream,std::list<VnetInfo> vnets_to_go);
     void call(EventType type,CallData *data);
     void try_register_event(Callable *callable,EventType event,CallData *callData,Tick &cycles);
-    void apply_boost(Tick boost);
     void call_events();
     void workload_finished(){finished_workloads++;};
-    void register_stream_change(int st_num);
-    void check_stream_change_history(BaseStream *stream);
     static Tick boostedTick();
-    static void ask_for_boost(Tick boost_amount);
     int get_next_node(int cuurent_node,int vnet_num);
     int get_next_sender_node(int cuurent_node,int vnet_num);
-    static void notify_stream_change(int stream_num,int vnet,std::string meth);
     static void exiting();
     int nextPowerOf2(int n);
-    int get_next_local_vnet();
-    int get_next_local_vnet_first();
-    int get_next_local_vnet_last();
-    int get_next_vertical_vnet();
-    int get_next_horizontal_vnet();
-    int get_next_horizontal_vnet_alltoall();
-    int get_next_perpendicular_vnet();
-    int get_next_fourth_vnet();
     static void sys_panic(std::string msg);
     void exitSimLoop(std::string msg);
 
@@ -958,13 +642,7 @@ public:
     DataSet *generate_hierarchichal_all_to_all(int size,bool local_run,bool vertical_run, bool horizontal_run, SchedulingPolicy pref_scheduling);
     DataSet *generate_hierarchichal_all_reduce(int size,bool local_run, bool vertical_run, bool horizontal_run, SchedulingPolicy pref_scheduling);
     DataSet *generate_hierarchichal_all_gather(int size,bool local_run, bool vertical_run, bool horizontal_run, SchedulingPolicy pref_scheduling);
-    bool search_for_active_streams(int vnet_to_search,int dest,int dest_vnet);
-    bool ready(int vnet);
-    void consume(RecvPacketEventHadndlerData *message);
-    void next_vnet(BaseStream* stream);
-    //void check_for_global_event_insertion(int cycles,EventType event);
     void proceed_to_next_vnet_baseline(StreamBaseline *stream);
-    //void proceed_to_next_vnet(Stream *stream);
     static void handleEvent(void *arg);
     timespec_t generate_time(int cycles);
 };

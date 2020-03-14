@@ -20,43 +20,15 @@ Author : Saeed Rashidi (saeed.rashidi@gatech.edu)
 *******************************************************************************/
 
 #include "Sys.hh"
-uint64_t Sys::streams_time=0;
 Tick Sys::offset=0;
 int Sys::total_nodes=0;
-uint64_t Sys::phase_latencies[10]={0,0,0,0,0,0,0,0,0,0};
 uint8_t *Sys::dummy_data=new uint8_t[2];
-std::vector<std::vector<Sys*>> Sys::masked_generators;
 std::vector<Sys*> Sys::all_generators;
-Tick Sys::last_tick=0;
-Tick Sys::min_boost=0;
-int Sys::requester_counter=0;
-Tick Sys::increase=0;
-//int ALU::total_ALUs=0;
 int MemMovRequest::id=0;
 
-//Tick ALU::global_utilization=0;
-//int BackwardLink::total_links=0;
-//Tick BackwardLink::global_utilization=0;
 std::map<int,int> BaseStream::synchronizer;
 std::map<int,int> BaseStream::ready_counter;
 std::map<int,std::list<BaseStream *>> BaseStream::suspended_streams;
-
-/*MyPacket::MyPacket(int cycles_needed, FIFOMovement *fMovement, FIFO *dest){
-    this->cycles_needed=cycles_needed;
-    this->fMovement=fMovement;
-    this->dest=dest;
-    //assert(fMovement!=NULL);
-    if(fMovement!=NULL){
-        fm_id=fMovement->id;
-        stream_num=fMovement->stream_num;
-    }
-    notifier=NULL;
-    sender=NULL;
-    if(cycles_needed==0){
-        this->cycles_needed=10;
-    }
-    //is_ready=false;
-}*/
 
 MyPacket::MyPacket(int preferred_vnet,int preferred_src ,int preferred_dest) {
   this->preferred_vnet=preferred_vnet;
@@ -493,40 +465,6 @@ void MemBus::send_from_MA_to_NPU(int bytes,bool processed,bool send_back,Callabl
         generator->register_event(callable,EventType::MA_to_NPU,new SharedBusStat(BusType::Shared,0,communication_delay,0,0),communication_delay);
     }
 }
-VnetInfo::VnetInfo(Sys *generator,std::string direction,int vnet_num,int burst,int flits,int dest_node,int parallel_reduce,int processing_latency, int nodes_in_vnet, int communication_delay,
-int packets_per_message,int message_size,bool enabled){
-    this->generator=generator;
-    this->direction=direction;
-    this->burst=burst;
-    this->flits=flits;
-    this->dest_node=dest_node;
-    this->parallel_reduce=parallel_reduce;
-    this->processing_latency=processing_latency+100;//
-    this->nodes_in_vnet=nodes_in_vnet;
-    this->communication_delay=communication_delay+150;//
-    this->vnet_num=vnet_num;
-    this->packets_per_message=packets_per_message;
-    this->message_size=message_size;
-    this->packet_size=message_size/packets_per_message;
-    this->enabled=enabled;
-    this->injectionPolicy=InjectionPolicy::Aggressive;
-    this->packetRouting=PacketRouting::Software;
-    algorithm=NULL;
-    //this->alltoall_split=0;
-    /*if(direction=="Local"){
-        alltoall_split=generator->id-(generator->id%generator->local_dim);
-        std::cout<<"I am node: "<<generator->id<<" , and my link: "<<direction<<" is splitted in node: "<<alltoall_split<<std::endl;
-    }
-    else if(direction=="West" || direction=="East"){
-        alltoall_split=generator->id-(generator->id%(generator->local_dim*generator->horizontal_dim));
-        alltoall_split+=(generator->id%generator->local_dim);
-        std::cout<<"I am node: "<<generator->id<<" , and my link: "<<direction<<" is splitted in node: "<<alltoall_split<<std::endl;
-    }
-    else if(direction=="North" || direction=="South"){
-        alltoall_split=generator->id%(generator->local_dim*generator->horizontal_dim);
-        std::cout<<"I am node: "<<generator->id<<" , and my link: "<<direction<<" is splitted in node: "<<alltoall_split<<std::endl;
-    }*/
-}
 VnetInfo::VnetInfo(Sys *generator, int Vnet_num, Algorithm *algorithm) {
     this->generator=generator;
     this->vnet_num=Vnet_num;
@@ -542,264 +480,29 @@ VnetInfo::VnetInfo(){
     generator=NULL;
     algorithm=NULL;
 }
-void VnetInfo::init() {
-    //this->dest_node=this->generator->get_next_node(generator->id,vnet_num);
-    this->sender_node=this->generator->get_next_sender_node(generator->id,vnet_num);
-}
 void VnetInfo::init(BaseStream *stream) {
     if(algorithm!=NULL){
         algorithm->init(stream);
     }
-}
-void VnetInfo::adjust_message_size(int size){
-    if(size<packet_size){
-        size=packet_size;
-    }
-    int old_size=this->message_size;
-    this->message_size=size;
-    this->packets_per_message=size/packet_size;
-    this->communication_delay=(int)((((float)size)/old_size)*this->communication_delay);
-    this->processing_latency=(int)((((float)size)/old_size)*this->processing_latency);
-    //std::cout<<"comm delay after adjusting message: "<<this->communication_delay<<std::endl;
-    //std::cout<<"proc delay after adjusting message: "<<this->processing_latency<<std::endl;
-}
-void VnetInfo::makeSinglePacketFLit() {
-    packet_size=message_size;
-    packets_per_message=1;
-    flits=1;
-}
-int VnetInfo::clone_for_all_reduce(int size_of_stream){
-    init();
-    initial_data_size=size_of_stream;
-    comm_type=ComType::All_Reduce;
-    int tmp=(int)ceil(((double)size_of_stream)/message_size);
-    //tmp+=(nodes_in_vnet-(tmp%nodes_in_vnet));
-    burst=(tmp/nodes_in_vnet)*(nodes_in_vnet-1)*2;
-    final_data_size=tmp*message_size;
-    makeSinglePacketFLit();
-    return tmp*message_size;
-}
-int VnetInfo::clone_for_exhange(int size_of_stream){
-    init();
-    initial_data_size=size_of_stream;
-    comm_type=ComType::Exchange;
-    int tmp=(int)ceil(((double)size_of_stream)/message_size);
-    burst=tmp;
-    final_data_size=size_of_stream;
-    makeSinglePacketFLit();
-    return size_of_stream;
-}
-int VnetInfo::clone_for_reduction(int size_of_stream){
-    init();
-    initial_data_size=size_of_stream;
-    comm_type=ComType::Reduction;
-    int tmp=(int)ceil(((double)size_of_stream)/message_size);
-    burst=tmp;
-    final_data_size=size_of_stream;
-    makeSinglePacketFLit();
-    return size_of_stream;
-}
-int VnetInfo::clone_for_reduce_scatter(int size_of_stream){
-    init();
-    initial_data_size=size_of_stream;
-    comm_type=ComType::Reduce_Scatter;
-    int tmp=(int)ceil(((double)size_of_stream)/message_size);
-    //tmp+=(nodes_in_vnet-(tmp%nodes_in_vnet));
-    //std::cout<<"tmp is: "<<tmp<<std::endl;
-    burst=(tmp/nodes_in_vnet)*(nodes_in_vnet-1);
-    final_data_size=(tmp*message_size)/nodes_in_vnet;
-    makeSinglePacketFLit();
-    return (tmp*message_size)/nodes_in_vnet;
-}
-int VnetInfo::clone_for_all_to_all_on_torus(int size_of_stream,PacketRouting rounting,InjectionPolicy ip){
-    init();
-    initial_data_size=size_of_stream;
-    message_size=size_of_stream/nodes_in_vnet;
-    packets_per_message=message_size/packet_size;
-    packetRouting=rounting;
-    injectionPolicy=ip;
-    comm_type=ComType::All_to_All;
-    if(injectionPolicy==InjectionPolicy::Aggressive){
-        parallel_reduce=nodes_in_vnet-1;
-    }
-    else{
-        parallel_reduce=1>=nodes_in_vnet-1?nodes_in_vnet-1:1;
-    }
-    if(rounting==PacketRouting::Software){
-        burst=((nodes_in_vnet-1)*nodes_in_vnet)/2;
-    }
-    else{
-        burst=nodes_in_vnet-1;
-    }
-    final_data_size=initial_data_size;
-    //std::cout<<"clone for all_to_all, message size: "<<message_size<<", packet size: "<<packet_size<<
-    //", packets per message: "<<packets_per_message<<" ,burst: "<<burst<<" ,data size: "<<final_data_size<<std::endl;
-    makeSinglePacketFLit();
-    return final_data_size;
-}
-int VnetInfo::clone_for_all_to_all_on_alltoall(int size_of_stream){
-    init();
-    initial_data_size=size_of_stream;
-    message_size=size_of_stream/nodes_in_vnet;
-    packets_per_message=message_size/packet_size;
-    //injectionPolicy=ip;
-    parallel_reduce=nodes_in_vnet-1;
-    comm_type=ComType::All_to_All;
-    burst=nodes_in_vnet-1;
-    final_data_size=initial_data_size;
-    //std::cout<<"clone for all_to_all, message size: "<<message_size<<", packet size: "<<packet_size<<
-    //", packets per message: "<<packets_per_message<<" ,burst: "<<burst<<" ,data size: "<<final_data_size<<std::endl;
-    makeSinglePacketFLit();
-    return final_data_size;
-}
-int VnetInfo::clone_for_all_reduce_single_on_alltoall(int size_of_stream){
-    init();
-    initial_data_size=size_of_stream;
-    message_size=size_of_stream/nodes_in_vnet;
-    packets_per_message=message_size/packet_size;
-    parallel_reduce=nodes_in_vnet-1;
-
-    comm_type=ComType::All_Reduce;
-    burst=2*(nodes_in_vnet-1);
-    final_data_size=initial_data_size;
-    //std::cout<<"clone for all-reduce, message size: "<<message_size<<", packet size: "<<packet_size<<
-    //", packets per message: "<<packets_per_message<<" ,burst: "<<burst<<" ,data size: "<<final_data_size<<std::endl;
-    makeSinglePacketFLit();
-    return final_data_size;
-}
-int VnetInfo::clone_for_all_reduce_single_on_torus(int size_of_stream){
-    init();
-    std::cout<<"clone for allreduce in node id: "<<generator->id<< " ,previous node: "<<sender_node<<" ,next node: "<<dest_node<<std::endl;
-    initial_data_size=size_of_stream;
-    message_size=size_of_stream/nodes_in_vnet;
-    packets_per_message=message_size/packet_size;
-    parallel_reduce=1;
-
-    comm_type=ComType::All_Reduce;
-    burst=2*(nodes_in_vnet-1);
-    final_data_size=initial_data_size;
-    //std::cout<<"clone for all-reduce, message size: "<<message_size<<", packet size: "<<packet_size<<
-    //", packets per message: "<<packets_per_message<<" ,burst: "<<burst<<" ,data size: "<<final_data_size<<std::endl;
-    makeSinglePacketFLit();
-    return final_data_size;
-}
-/*int VnetInfo::clone_for_all_reduce_single_on_tree(int size_of_stream){
-    algorithm=new DoubleBinaryTreeAllReduce();
-    return 0;
-}*/
-int VnetInfo::clone_for_reduce_scatter_single_on_alltoall(int size_of_stream){
-    init();
-    initial_data_size=size_of_stream;
-    message_size=size_of_stream/nodes_in_vnet;
-    packets_per_message=message_size/packet_size;
-    parallel_reduce=nodes_in_vnet-1;
-
-    comm_type=ComType::Reduce_Scatter;
-    int tmp=(int)ceil(((double)size_of_stream)/message_size);
-    //tmp+=(nodes_in_vnet-(tmp%nodes_in_vnet));
-    //std::cout<<"tmp is: "<<tmp<<std::endl;
-    burst=(tmp/nodes_in_vnet)*(nodes_in_vnet-1);
-    final_data_size=(tmp*message_size)/nodes_in_vnet;
-    makeSinglePacketFLit();
-    return (tmp*message_size)/nodes_in_vnet;
-}
-int VnetInfo::clone_for_reduce_scatter_single_on_torus(int size_of_stream){
-    init();
-    initial_data_size=size_of_stream;
-    message_size=size_of_stream/nodes_in_vnet;
-    packets_per_message=message_size/packet_size;
-    parallel_reduce=1;
-
-    comm_type=ComType::Reduce_Scatter;
-    int tmp=(int)ceil(((double)size_of_stream)/message_size);
-    //tmp+=(nodes_in_vnet-(tmp%nodes_in_vnet));
-    //std::cout<<"tmp is: "<<tmp<<std::endl;
-    burst=(tmp/nodes_in_vnet)*(nodes_in_vnet-1);
-    final_data_size=(tmp*message_size)/nodes_in_vnet;
-    makeSinglePacketFLit();
-    return (tmp*message_size)/nodes_in_vnet;
-}
-int VnetInfo::clone_for_all_gather(int size_of_stream){
-    init();
-    initial_data_size=size_of_stream;
-    comm_type=ComType::All_Gatehr;
-    int tmp=(int)ceil(((double)size_of_stream)/message_size);
-    burst=(tmp)*(nodes_in_vnet-1);
-    final_data_size=(tmp*message_size)*nodes_in_vnet;
-    makeSinglePacketFLit();
-    return (tmp*message_size)*nodes_in_vnet;
-}
-int VnetInfo::clone_for_all_gather_single_on_alltoall(int size_of_stream){
-    init();
-    initial_data_size=size_of_stream;
-    message_size=size_of_stream;
-    packets_per_message=message_size/packet_size;
-    parallel_reduce=nodes_in_vnet-1;
-
-    comm_type=ComType::All_Gatehr;
-    int tmp=(int)ceil(((double)size_of_stream)/message_size);
-    burst=(tmp)*(nodes_in_vnet-1);
-    final_data_size=(tmp*message_size)*nodes_in_vnet;
-    //std::cout<<"allgather, tmp: "<<tmp<<" , msg-size: "<<message_size<<
-    //" ,nodes in vnet: "<<nodes_in_vnet<<std::endl;
-    makeSinglePacketFLit();
-    return (tmp*message_size)*nodes_in_vnet;
-}
-int VnetInfo::clone_for_all_gather_single_on_torus(int size_of_stream){
-    init();
-    initial_data_size=size_of_stream;
-    message_size=size_of_stream;
-    packets_per_message=message_size/packet_size;
-    parallel_reduce=1;
-
-    comm_type=ComType::All_Gatehr;
-    int tmp=(int)ceil(((double)size_of_stream)/message_size);
-    burst=(tmp)*(nodes_in_vnet-1);
-    final_data_size=(tmp*message_size)*nodes_in_vnet;
-    //std::cout<<"allgather, tmp: "<<tmp<<" , msg-size: "<<message_size<<
-    //" ,nodes in vnet: "<<nodes_in_vnet<<std::endl;
-    makeSinglePacketFLit();
-    return (tmp*message_size)*nodes_in_vnet;
 }
 DMA_Request::DMA_Request(int id,int slots,int latency,int bytes){
     this->slots=slots;
     this->latency=latency;
     this->id=id;
     this->executed=false;
-    //this->notifier=NULL;
     this->stream_owner=NULL;
     this->bytes=bytes;
-    //this->sender=NULL;
 }
 DMA_Request::DMA_Request(int id,int slots,int latency,int bytes,Callable *stream_owner){
     this->slots=slots;
     this->latency=latency;
     this->id=id;
     this->executed=false;
-    //this->notifier=NULL;
     this->bytes=bytes;
     this->stream_owner=stream_owner;
-    //this->sender=sender;
 }
 void BaseStream::changeState(StreamState state) {
     this->state=state;
-}
-void BaseStream::search_for_early_packets(){
-    /*if(owner->earlyPackets.find(stream_num)!=owner->earlyPackets.end()){
-        std::vector<MsgPtr>::iterator it=owner->earlyPackets[stream_num].begin();
-        for (; it != owner->earlyPackets[stream_num].end(); ) {
-            if (it->get()->vnet_to_fetch==my_info.vnet_num){
-                consume(*it);
-                it = owner->earlyPackets[stream_num].erase(it);
-            }
-            else{
-                std::advance(it,1);
-            }
-        }
-        if(owner->earlyPackets[stream_num].size()==0){
-            owner->earlyPackets.erase(stream_num);
-        }
-    }*/
 }
 
 BaseStream::BaseStream(int stream_num,Sys *owner,std::list<VnetInfo> vnets_to_go){
@@ -819,12 +522,9 @@ BaseStream::BaseStream(int stream_num,Sys *owner,std::list<VnetInfo> vnets_to_go
             vn.init(this);
         }
     }
-    not_delivered=0;
     state=StreamState::Created;
     preferred_scheduling=SchedulingPolicy::None;
     creation_time=Sys::boostedTick();
-    data_collected= false;
-    packet_num=0;
     total_packets_sent=0;
     current_vnet=-1;
 }
@@ -929,12 +629,8 @@ StreamBaseline::StreamBaseline(Sys *owner,DataSet *dataset,int stream_num,std::l
         this->stream_num=stream_num;
         this->vnets_to_go=vnets_to_go;
         this->dataset=dataset;
-        zero_latency_packets=0;
-        non_zero_latency_packets=0;
-        finished_packet_received=false;
         steps_finished=0;
         initial_data_size=vnets_to_go.front().initial_data_size;
-        free_packets=0;
         final_compute=0;
 }
 void StreamBaseline::init(){
@@ -951,10 +647,7 @@ void StreamBaseline::init(){
     total_packets_sent=1;
 }
 void StreamBaseline::call(EventType event,CallData *data){
-    if(event==EventType::Delivered){
-        not_delivered-=my_info.packets_per_message;
-    }
-    else if(event==EventType::WaitForVnetTurn){
+    if(event==EventType::WaitForVnetTurn){
         owner->proceed_to_next_vnet_baseline(this);
         return;
     }
@@ -962,7 +655,6 @@ void StreamBaseline::call(EventType event,CallData *data){
         //std::cout<<"general event called in stream"<<std::endl;
         SharedBusStat *sharedBusStat=(SharedBusStat *)data;
         update_bus_stats(BusType::Both,sharedBusStat);
-        free_packets+=my_info.packets_per_message;
         my_info.algorithm->run(EventType::General,data);
         if(data!=NULL){
             delete data;
@@ -1059,13 +751,12 @@ Sys::Sys(CommonAPI *NI,int id,int num_passes,int local_dim, int vertical_dim,int
         <<", "<<horizontal_queues<<std::endl;
     }
 
-    this->ALU_reduction_allocator=0;
 
 
     this->pending_events=0;
     this->workload_event_index=-1;
 
-    int toatl_disabled=0;
+    int total_disabled=0;
     int ver=vertical_dim<1?1:vertical_dim;
     int perp=perpendicular_dim<1?1:perpendicular_dim;
     int loc=local_dim<1?1:local_dim;
@@ -1089,13 +780,8 @@ Sys::Sys(CommonAPI *NI,int id,int num_passes,int local_dim, int vertical_dim,int
         std::list<int> pri;
         stream_priorities[element]=pri;
         if(!enabled){
-            if(masked_generators.size()<element+1){
-                masked_generators.resize(element+1);
-            }
-            masked_generators[element].push_back(this);
-            toatl_disabled++;
+            total_disabled++;
         }
-        myAllToAllVnet[element]=element;
     }
     int pastElement=element;
     for (;element<vertical_queues+pastElement;element++) {
@@ -1108,11 +794,7 @@ Sys::Sys(CommonAPI *NI,int id,int num_passes,int local_dim, int vertical_dim,int
         std::list<int> pri;
         stream_priorities[element]=pri;
         if(!enabled){
-            if(masked_generators.size()<element+1){
-                masked_generators.resize(element+1);
-            }
-            masked_generators[element].push_back(this);
-            toatl_disabled++;
+            total_disabled++;
         }
     }
     pastElement=element;
@@ -1126,11 +808,7 @@ Sys::Sys(CommonAPI *NI,int id,int num_passes,int local_dim, int vertical_dim,int
         std::list<int> pri;
         stream_priorities[element]=pri;
         if(!enabled){
-            if(masked_generators.size()<element+1){
-                masked_generators.resize(element+1);
-            }
-            masked_generators[element].push_back(this);
-            toatl_disabled++;
+            total_disabled++;
         }
     }
     pastElement=element;
@@ -1144,11 +822,7 @@ Sys::Sys(CommonAPI *NI,int id,int num_passes,int local_dim, int vertical_dim,int
         std::list<int> pri;
         stream_priorities[element]=pri;
         if(!enabled){
-            if(masked_generators.size()<element+1){
-            masked_generators.resize(element+1);
-            }
-            masked_generators[element].push_back(this);
-            toatl_disabled++;
+            total_disabled++;
         }
     }
     pastElement=element;
@@ -1162,11 +836,7 @@ Sys::Sys(CommonAPI *NI,int id,int num_passes,int local_dim, int vertical_dim,int
         std::list<int> pri;
         stream_priorities[element]=pri;
         if(!enabled){
-            if(masked_generators.size()<element+1){
-                masked_generators.resize(element+1);
-            }
-            masked_generators[element].push_back(this);
-            toatl_disabled++;
+            total_disabled++;
         }
 
     }
@@ -1175,31 +845,22 @@ Sys::Sys(CommonAPI *NI,int id,int num_passes,int local_dim, int vertical_dim,int
     for(auto l:levels){
         total_levels+=l;
     }
-    if(total_levels==toatl_disabled){
+    if(total_levels==total_disabled){
         NI->enabled= false;
         std::cout<<"Node "<<id<<" has been totally disabled"<<std::endl;
     }
-    scheduler_unit=new SchedulerUnit(this,levels,8,2);
+    int concurrent_streams=2;
+    if(injection_policy==InjectionPolicy::Aggressive){
+        concurrent_streams=8;
+    }
+    scheduler_unit=new SchedulerUnit(this,levels,8,concurrent_streams);
     vLevels=new VnetLevels(levels,0);
     logical_topologies["DBT"]=new DoubleBinaryTreeTopology(id,horizontal_dim,id%local_dim,local_dim,local_dim);          //horizontal_dim,id%local_dim,local_dim);
     logical_topologies["Torus"]=new Torus(id,total_nodes,loc,hor,ver,perp);
     logical_topologies["A2A"]=new AllToAllTopology(id,total_nodes,loc,hor);
 
-    local_allocator_first=0;
-    local_allocator_last=0;
-    vertical_allocator=0;
-    if(collectiveImplementation==CollectiveImplementation::AllToAll ||
-    collectiveImplementation==CollectiveImplementation::DoubleBinaryTree){
-        horizontal_allocator=id/local_dim;
-    }
-    else{
-        horizontal_allocator=0;
-    }
-    perpendicular_allocator=0;
-    fourth_allocator=0;
     stream_counter=0;
     all_vnets=local_queus+vertical_queues+horizontal_queues+perpendicular_queues+fourth_queues;
-
     enabled=true;
 
     if(id==0){
@@ -1277,9 +938,9 @@ void Sys::post_process_inputs() {
         alltoall_routing=PacketRouting ::Software;
     }
     if(inp_injection_policy =="aggressive"){
-        alltoall_injection_policy=InjectionPolicy ::Aggressive;
+        injection_policy=InjectionPolicy ::Aggressive;
     } else{
-        alltoall_injection_policy=InjectionPolicy ::Normal;
+        injection_policy=InjectionPolicy ::Normal;
     }
     if(inp_collective_implementation=="hierarchicalRing"){
         collectiveImplementation=CollectiveImplementation::HierarchicalRing;
@@ -1815,11 +1476,6 @@ DataSet* Sys::generate_hierarchichal_all_gather(int size,bool local_run, bool ve
     }
     return dataset;
 }
-void Sys::apply_boost(Tick boost){
-}
-void Sys::notify_stream_change(int stream_num,int vnet,std::string meth){
-
-}
 void Sys::call_events(){
     for(auto &callable:event_queue[Sys::boostedTick()]){
         try  {
@@ -1842,9 +1498,6 @@ void Sys::call_events(){
         //std::cout<<"pending events: "<<pending_events<<" ,workload counter: "<<workload->counter<<std::endl;
     //}
 }
-void Sys::consume(RecvPacketEventHadndlerData *msg){
-
-}
 void Sys::exitSimLoop(std::string msg) {
     NI->sim_finish();
     return;
@@ -1863,15 +1516,6 @@ Tick Sys::boostedTick(){
     Tick tick=tmp.time_val/CLOCK_PERIOD;
     return tick+offset;
 }
-void Sys::next_vnet(BaseStream* stream){
-
-}
-bool Sys::search_for_active_streams(int vnet_to_search,int dest,int dest_vnet){
-    return false;
-}
-bool Sys::ready(int vnet){
-    return true;
-}
 void Sys::proceed_to_next_vnet_baseline(StreamBaseline *stream){
 //int added_delay=0;
     if(id==0){
@@ -1889,8 +1533,6 @@ void Sys::proceed_to_next_vnet_baseline(StreamBaseline *stream){
         if(stream->steps_finished==0){
             std::cout<<"*************************weird thing has happend***********************"<<std::endl;
         }
-        //std::cout<<"executed"<<std::endl;
-        //std::cout<<"warning for stream "<<stream->stream_num<<std::endl;
     }
     if(stream->vnets_to_go.size()>0){
         //std::cout<<"priority size: "<<stream_priorities[stream->vnets_to_go.front().vnet_num].size()<<" ,in node: "<<id<<std::endl;
@@ -1906,14 +1548,8 @@ void Sys::proceed_to_next_vnet_baseline(StreamBaseline *stream){
     int previous_vnet=stream->current_vnet;
     if(stream->steps_finished==1){
         first_phase_streams--;
-        /*if(first_phase_streams<4){
-            ask_for_schedule();
-        }*/
     }
     if(stream->steps_finished!=0){
-    //if(stream->steps_finished==1 && id==0){
-    //    std::cout<<"stream "<<stream->stream_num<<" ,total message counter = "<<stream->net_message_counter<<" , total time: "<<stream->net_message_latency.back()<<std::endl;
-    // }
         stream->net_message_latency.back()/=stream->net_message_counter;
     }
     if(stream->my_info.algorithm!=NULL){
@@ -1924,15 +1560,10 @@ void Sys::proceed_to_next_vnet_baseline(StreamBaseline *stream){
         stream->take_bus_stats_average();
         stream->dataset->notify_stream_finished((StreamStat*)stream);
         if(id==0){
-            streams_time+=Sys::boostedTick()-stream->creation_time;
             std::cout<<"stream number: "<<stream->stream_num<<"  finished its execution in time: "<<Sys::boostedTick()<<std::endl;
         }
     }
     if(stream->current_vnet>=0){
-        if(id==0){
-            stream->phase_latencies[stream->steps_finished-1]=Sys::boostedTick();
-        }
-        //added_delay=stream->switch_delay>0?stream->switch_delay:0;
         std::list<BaseStream*> &target=active_Streams.at(stream->my_info.vnet_num);
         for(std::list<BaseStream*>::iterator it = target.begin(); it != target.end(); ++it) {
             if(((StreamBaseline *)(*it))->stream_num==stream->stream_num){
@@ -1943,9 +1574,6 @@ void Sys::proceed_to_next_vnet_baseline(StreamBaseline *stream){
         }
     }
     if(stream->vnets_to_go.size()==0){
-        /*if(previous_vnet>=0 && active_Streams[previous_vnet].size()>0){
-            active_Streams[previous_vnet].front()->init();
-        }*/
         if(previous_vnet>=0) {
             scheduler_unit->notify_stream_removed(previous_vnet);
         }
@@ -1958,41 +1586,16 @@ void Sys::proceed_to_next_vnet_baseline(StreamBaseline *stream){
 
     VnetInfo vi=stream->vnets_to_go.front();
     stream->my_info=vi;
-    //stream->in_progress=true;
     stream->vnets_to_go.pop_front();
-    stream->stream_count=vi.burst;
-    stream->remained_packets_per_message=vi.packets_per_message;
-    stream->remained_packets_per_max_count=vi.packets_per_message;
-    stream->finished_packet_received=false;
-    stream->max_count=0;
-    stream->zero_latency_packets=0;
-    stream->non_zero_latency_packets=0;
-    stream->toggle= false;
-    //stream->alltoall_synchronizer.clear();
     stream->test=0;
     stream->test2=0;
     stream->initialized= false;
-    stream->data_collected= false;
     stream->last_vnet_change=Sys::boostedTick();
     stream->total_packets_sent=0;
 
     stream->net_message_latency.push_back(0);
     stream->net_message_counter=0;
 
-    if(stream->current_com_type==ComType::Reduce_Scatter){
-        stream->max_count=vi.burst;
-    }
-    else if(stream->current_com_type==ComType::All_Reduce){
-        stream->max_count=vi.burst/2;
-    }
-    if(stream->current_com_type==ComType::Reduce_Scatter){
-        stream->switch_delay=vi.processing_latency;
-    }
-    else{
-        stream->switch_delay=0;
-    }
-
-    stream->free_packets=0;
     if(id==0){
         std::cout<<"info ,for node: "<<id<<" stream num "<<stream->stream_num<<" has been changed to vnet: "<<stream->current_vnet
         <<" at time: "<<boostedTick()<<" ,remaining: "<<stream->vnets_to_go.size()<<" ,intial size: "<<stream->initial_data_size<<" total injected: "<<streams_injected<<" ,total finished: "<<streams_finished<<std::endl;
@@ -2010,10 +1613,8 @@ void Sys::proceed_to_next_vnet_baseline(StreamBaseline *stream){
         active_Streams[stream->current_vnet].push_back(stream);
     }
     stream->state=StreamState::Ready;
-    stream->search_for_early_packets();
 
     if(!stream->my_info.enabled){
-        check_stream_change_history(stream);
         stream->declare_ready();
         stream->suspend_ready();
     }
@@ -2026,76 +1627,8 @@ void Sys::proceed_to_next_vnet_baseline(StreamBaseline *stream){
     if(previous_vnet!=stream->current_vnet && previous_vnet>=0){
         scheduler_unit->notify_stream_removed(previous_vnet);
     }
-    /*if(active_Streams[stream->current_vnet].size()==1 || ((stream->my_info.algorithm->name==Algorithm::Name::AllToAll) && stream->current_com_type==ComType::All_Gatehr && ((AllToAll*)stream->my_info.algorithm)->dimension!=AllToAllTopology::Dimension::Local)){
-        stream->init();
-    }
-    if(previous_vnet!=stream->current_vnet && previous_vnet>=0 && active_Streams[previous_vnet].size()>0){
-        active_Streams[previous_vnet].front()->init();
-    }*/
-}
-int Sys::get_next_local_vnet(){
-    int temp=local_vnets[local_allocator_first%local_vnets.size()];
-    local_allocator_first++;
-    return temp;
-}
-int Sys::get_next_local_vnet_first(){
-    int temp=local_vnets[local_allocator_first%(local_vnets.size()/2)];
-    local_allocator_first++;
-    return temp;
-}
-int Sys::get_next_local_vnet_last(){
-    int temp=local_vnets[(local_vnets.size()/2)+local_allocator_last%(local_vnets.size()/2)];
-    local_allocator_last++;
-    return temp;
-}
-int Sys::get_next_vertical_vnet(){
-    int index=vertical_allocator++%(vertical_vnets1.size()+vertical_vnets2.size());
-    if(index<vertical_vnets1.size()){
-        return vertical_vnets1[index];
-    }
-    else{
-        return vertical_vnets2[index-vertical_vnets1.size()];
-    }
-
-}
-int Sys::get_next_horizontal_vnet(){
-    int index=horizontal_allocator++%(horizontal_vnets1.size()+horizontal_vnets2.size());
-    if(index<horizontal_vnets1.size()){
-        return horizontal_vnets1[index];
-    }
-    else{
-        return horizontal_vnets2[index-horizontal_vnets1.size()];
-    }
-
-}
-int Sys::get_next_horizontal_vnet_alltoall(){
-    int index=horizontal_allocator%horizontal_vnets1.size();
-    horizontal_allocator+=horizontal_dim;
-    return horizontal_vnets1[index];
-}
-int Sys::get_next_perpendicular_vnet(){
-    int index=perpendicular_allocator++%(perpendicular_vnets1.size()+perpendicular_vnets2.size());
-    if(index<perpendicular_vnets1.size()){
-        return perpendicular_vnets1[index];
-    }
-    else{
-        return perpendicular_vnets2[index-perpendicular_vnets1.size()];
-    }
-
-}
-int Sys::get_next_fourth_vnet(){
-    int index=fourth_allocator++%(fourth_vnets1.size()+fourth_vnets2.size());
-    if(index<fourth_vnets1.size()){
-        return fourth_vnets1[index];
-    }
-    else{
-        return fourth_vnets2[index-fourth_vnets1.size()];
-    }
 }
 void Sys::exiting(){
-}
-void Sys::ask_for_boost(Tick boost_amount){
-    return;
 }
 int Sys::get_next_node(int cuurent_node,int vnet_num){
     return -1;
@@ -2112,28 +1645,7 @@ void Sys::increase_finished_streams(int amount) {
         c->call(EventType::StreamsFinishedIncrease,NULL);
     }
 }
-void Sys::register_stream_change(int st_num){
-    if(stream_change_history.find(st_num)!=stream_change_history.end()){
-        stream_change_history[st_num]++;
-    }
-    else{
-        stream_change_history[st_num]=1;
-    }
-}
-void Sys::check_stream_change_history(BaseStream *stream){
-    if(stream_change_history.find(stream->stream_num)!=stream_change_history.end()){
-        stream_change_history[stream->stream_num]--;
-        if(stream_change_history[stream->stream_num]==0){
-            stream_change_history.erase(stream->stream_num);
-        }
-        if(method=="proposed"){
-            //proceed_to_next_vnet((Stream *)stream);
-        }
-        else{
-            proceed_to_next_vnet_baseline((StreamBaseline *)stream);
-        }
-    }
-}
+
 void Sys::register_vnets(BaseStream *stream,std::list<VnetInfo> vnets_to_go){
     /*if(stream->stream_num==247 || stream->stream_num==267){
         std::cout<<"*******************stream number "<<stream->stream_num<<"has been registered, steps: "<<stream->vnets_to_go.size()
@@ -2150,9 +1662,6 @@ void Sys::register_event(Callable *callable,EventType event,CallData *callData,i
     return;
 }
 void Sys::call(EventType type,CallData *data){
-    /*if(type==EventType::Apply_Boost){
-
-    }*/
     if(id==0 && type==EventType::General){
         increase_finished_streams(1);
     }
@@ -2240,7 +1749,7 @@ void Sys::handleEvent(void *arg) {
     EventType event=ehd->event;
 
     if(event==EventType::CallEvents){
-        //std::cout<<"handle event triggered for call events!"<<std::endl;
+        //std::cout<<"handle event triggered for call events! at time: "<<Sys::boostedTick()<<std::endl;
         all_generators[id]->iterate();
         delete ehd;
     }
@@ -2302,64 +1811,64 @@ Torus::Torus(int id, int total_nodes, int local_dim, int horizontal_dim, int ver
 }
 void Torus::find_neighbors(int id, int total_nodes, int local_dim, int horizontal_dim, int vertical_dim,
                            int perpendicular_dim) {
-        //mycode
-        //cout<<"my id: "<<m_id<<endl;
-        std::map<int,int> temp;
-        std::map<int,int> temp2;
-        int m_id=id;
-        std::string topology="Torus3D";
+    //mycode
+    //cout<<"my id: "<<m_id<<endl;
+    std::map<int,int> temp;
+    std::map<int,int> temp2;
+    int m_id=id;
+    std::string topology="Torus3D";
 
-        int local_cols=local_dim;
-        int package_cols=horizontal_dim;
+    int local_cols=local_dim;
+    int package_cols=horizontal_dim;
 
-        if((m_id+1)%local_cols!=0){
-            local_node_id=m_id+1;
-        }
-        else{
-            local_node_id=m_id-(m_id%local_cols);
-        }
-        right_node_id=(m_id-(m_id%(local_cols*package_cols)))+((m_id+local_cols)%(local_cols*package_cols));
-        left_node_id=(m_id-(m_id%(local_cols*package_cols)))+get_reminder(m_id-local_cols,local_cols*package_cols);//((m_id-local_cols)%(local_cols*package_cols));
+    if((m_id+1)%local_cols!=0){
+        local_node_id=m_id+1;
+    }
+    else{
+        local_node_id=m_id-(m_id%local_cols);
+    }
+    right_node_id=(m_id-(m_id%(local_cols*package_cols)))+((m_id+local_cols)%(local_cols*package_cols));
+    left_node_id=(m_id-(m_id%(local_cols*package_cols)))+get_reminder(m_id-local_cols,local_cols*package_cols);//((m_id-local_cols)%(local_cols*package_cols));
 
-        if(topology=="Torus3D") {
-            up_node_id = (m_id + (local_cols * package_cols)) % total_nodes;
-            down_node_id = get_reminder(m_id - (local_cols * package_cols),
-                                        total_nodes); //(m_id-(local_cols*package_cols))%total_nodes;
-        }
-        else if(topology=="Torus4D"){
-            up_node_id=(m_id-(m_id%(local_cols*package_cols*vertical_dim)))+((m_id+(local_cols*package_cols))%(local_cols*package_cols*vertical_dim));
-            down_node_id=(m_id-(m_id%(local_cols*package_cols*vertical_dim)))+((m_id-(local_cols*package_cols))%(local_cols*package_cols*vertical_dim));
-            Zpositive_node_id=(m_id+(local_cols*package_cols*vertical_dim))%total_nodes;
-            Znegative_node_id=(m_id-(local_cols*package_cols*vertical_dim))%total_nodes;
-        }
-        else if(topology=="Torus5D"){
-            up_node_id=(m_id-(m_id%(local_cols*package_cols*vertical_dim)))+
-                       ((m_id+(local_cols*package_cols))%(local_cols*package_cols*vertical_dim));
-            down_node_id=(m_id-(m_id%(local_cols*package_cols*vertical_dim)))+
-                         ((m_id-(local_cols*package_cols))%(local_cols*package_cols*vertical_dim));
+    if(topology=="Torus3D") {
+        up_node_id = (m_id + (local_cols * package_cols)) % total_nodes;
+        down_node_id = get_reminder(m_id - (local_cols * package_cols),
+                                    total_nodes); //(m_id-(local_cols*package_cols))%total_nodes;
+    }
+    else if(topology=="Torus4D"){
+        up_node_id=(m_id-(m_id%(local_cols*package_cols*vertical_dim)))+((m_id+(local_cols*package_cols))%(local_cols*package_cols*vertical_dim));
+        down_node_id=(m_id-(m_id%(local_cols*package_cols*vertical_dim)))+((m_id-(local_cols*package_cols))%(local_cols*package_cols*vertical_dim));
+        Zpositive_node_id=(m_id+(local_cols*package_cols*vertical_dim))%total_nodes;
+        Znegative_node_id=(m_id-(local_cols*package_cols*vertical_dim))%total_nodes;
+    }
+    else if(topology=="Torus5D"){
+        up_node_id=(m_id-(m_id%(local_cols*package_cols*vertical_dim)))+
+                   ((m_id+(local_cols*package_cols))%(local_cols*package_cols*vertical_dim));
+        down_node_id=(m_id-(m_id%(local_cols*package_cols*vertical_dim)))+
+                     ((m_id-(local_cols*package_cols))%(local_cols*package_cols*vertical_dim));
 
-            Zpositive_node_id=(m_id-(m_id%(local_cols*package_cols*vertical_dim*perpendicular_dim)))+
-                              ((m_id+(local_cols*package_cols*vertical_dim))%(local_cols*package_cols*vertical_dim*perpendicular_dim));
-            Znegative_node_id=(m_id-(m_id%(local_cols*package_cols*vertical_dim*perpendicular_dim)))+
-                              ((m_id-(local_cols*package_cols*vertical_dim))%(local_cols*package_cols*vertical_dim*perpendicular_dim));
+        Zpositive_node_id=(m_id-(m_id%(local_cols*package_cols*vertical_dim*perpendicular_dim)))+
+                          ((m_id+(local_cols*package_cols*vertical_dim))%(local_cols*package_cols*vertical_dim*perpendicular_dim));
+        Znegative_node_id=(m_id-(m_id%(local_cols*package_cols*vertical_dim*perpendicular_dim)))+
+                          ((m_id-(local_cols*package_cols*vertical_dim))%(local_cols*package_cols*vertical_dim*perpendicular_dim));
 
-            Fpositive_node_id=(m_id+(local_cols*package_cols*vertical_dim*perpendicular_dim))%vertical_dim;
-            Fnegative_node_id=(m_id-(local_cols*package_cols*vertical_dim*perpendicular_dim))%vertical_dim;
-        }
-        if(topology=="Torus3D"){
-            std::cout<<"I'm node: "<<m_id<<"  , local: "<<local_node_id<<" , right: "<<right_node_id<<" , left: "<<left_node_id<<" , up: "<<up_node_id<<" , down: "<<down_node_id<<std::endl;
-        }
-        if(topology=="Torus4D"){
-            std::cout<<"I'm node: "<<m_id<<"  , local: "<<local_node_id<<" , right: "<<right_node_id<<" , left: "<<left_node_id<<" , up: "<<up_node_id
-                     <<" , down: "<<down_node_id<<" , Zpositive: "<<Zpositive_node_id<<" , Znegative: "<<Znegative_node_id<<std::endl;
-        }
-        if(topology=="Torus5D") {
-            std::cout << "I'm node: " << m_id << "  , local: " << local_node_id << " , right: " << right_node_id
-                      << " , left: " << left_node_id << " , up: " << up_node_id
-                      << " , down: " << down_node_id << " , Zpositive: " << Zpositive_node_id << " , Znegative: "
-                      << Znegative_node_id
-                      << " , Fpositive: " << Fpositive_node_id << " , Fnegative: " << Fnegative_node_id << std::endl;
-        }
+        Fpositive_node_id=(m_id+(local_cols*package_cols*vertical_dim*perpendicular_dim))%vertical_dim;
+        Fnegative_node_id=(m_id-(local_cols*package_cols*vertical_dim*perpendicular_dim))%vertical_dim;
+    }
+    if(topology=="Torus3D"){
+        std::cout<<"I'm node: "<<m_id<<"  , local: "<<local_node_id<<" , right: "<<right_node_id<<" , left: "<<left_node_id<<" , up: "<<up_node_id<<" , down: "<<down_node_id<<std::endl;
+    }
+    if(topology=="Torus4D"){
+        std::cout<<"I'm node: "<<m_id<<"  , local: "<<local_node_id<<" , right: "<<right_node_id<<" , left: "<<left_node_id<<" , up: "<<up_node_id
+                 <<" , down: "<<down_node_id<<" , Zpositive: "<<Zpositive_node_id<<" , Znegative: "<<Znegative_node_id<<std::endl;
+    }
+    if(topology=="Torus5D") {
+        std::cout << "I'm node: " << m_id << "  , local: " << local_node_id << " , right: " << right_node_id
+                  << " , left: " << left_node_id << " , up: " << up_node_id
+                  << " , down: " << down_node_id << " , Zpositive: " << Zpositive_node_id << " , Znegative: "
+                  << Znegative_node_id
+                  << " , Fpositive: " << Fpositive_node_id << " , Fnegative: " << Fnegative_node_id << std::endl;
+    }
 }
 int Torus::get_receiver_node(int id, Torus::Dimension dimension,Direction direction) {
     switch (dimension)
@@ -2765,16 +2274,16 @@ void DoubleBinaryTreeAllReduce::run(EventType event,CallData *data) {
         state=State::SendingDataToParent;
         return;
     }
-    /*else if(state==State::SendingDataToParent && type==BinaryTree::Type::Leaf){ //leaf.2
-        sim_request snd_req;
-        snd_req.srcRank = stream->owner->id;
-        snd_req.dstRank = parent;
-        snd_req.tag = stream->stream_num;
-        snd_req.reqType = UINT8;
-        stream->owner->NI->sim_send(Sys::dummy_data,data_size,UINT8,parent,stream->stream_num,&snd_req);
-        state=State::WaitingDataFromParent;
-        return;
-    }*/
+        /*else if(state==State::SendingDataToParent && type==BinaryTree::Type::Leaf){ //leaf.2
+            sim_request snd_req;
+            snd_req.srcRank = stream->owner->id;
+            snd_req.dstRank = parent;
+            snd_req.tag = stream->stream_num;
+            snd_req.reqType = UINT8;
+            stream->owner->NI->sim_send(Sys::dummy_data,data_size,UINT8,parent,stream->stream_num,&snd_req);
+            state=State::WaitingDataFromParent;
+            return;
+        }*/
     else if(state==State::SendingDataToParent && type==BinaryTree::Type::Leaf){ //leaf.3
         //sending
         sim_request snd_req;
@@ -2975,7 +2484,7 @@ std::pair<int,Torus::Direction> VnetLevels::get_next_vnet_at_level_last(int leve
     return levels[level].get_next_vnet_number_last();
 }
 Ring::Ring(Type type,int id, Torus *torus, int data_size, Torus::Dimension dimension,
-                             Torus::Direction direction,PacketRouting routing,InjectionPolicy injection_policy,bool boost_mode) {
+           Torus::Direction direction,PacketRouting routing,InjectionPolicy injection_policy,bool boost_mode) {
     //std::cout<<"Ring checkmark 0"<<std::endl;
     this->type=type;
     this->id=id;
@@ -3285,7 +2794,7 @@ void Ring::exit() {
     return;
 }
 AllToAll::AllToAll(Ring::Type type, int id,AllToAllTopology *allToAllTopology, int data_size, Torus::Dimension dimension,Torus::Direction direction, PacketRouting routing,InjectionPolicy injection_policy,bool boost_mode):
-                   Ring(type,id,((Torus *)allToAllTopology),data_size,dimension,direction,routing,injection_policy,boost_mode) {
+        Ring(type,id,((Torus *)allToAllTopology),data_size,dimension,direction,routing,injection_policy,boost_mode) {
     this->name=Name::AllToAll;
     this->enabled=true;
     if(boost_mode){
