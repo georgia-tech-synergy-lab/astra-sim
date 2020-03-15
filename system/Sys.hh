@@ -394,17 +394,17 @@ class MemBus{
 };
 class Algorithm;
 class LogicalTopology;
-class VnetInfo{
+class CollectivePhase{
     public:
         Sys *generator;
-        int vnet_num;
+        int queue_id;
         int initial_data_size;
         int final_data_size;
         bool enabled;
         ComType comm_type;
         Algorithm *algorithm;
-        VnetInfo(Sys *generator,int Vnet_num,Algorithm *algorithm);
-        VnetInfo();
+        CollectivePhase(Sys *generator,int queue_id,Algorithm *algorithm);
+        CollectivePhase();
         void init(BaseStream *stream);
 };
 class DMA_Request{
@@ -427,12 +427,9 @@ public:
     int stream_num;
     int total_packets_sent;
     SchedulingPolicy preferred_scheduling;
-    //std::vector<ComType> com_types;
-    std::list<VnetInfo> vnets_to_go;
-    //std::vector<int> latency_count;
-    int current_vnet;
-    VnetInfo my_info;
-    //int current_latency_count;
+    std::list<CollectivePhase> phases_to_go;
+    int current_queue_id;
+    CollectivePhase my_current_phase;
     ComType current_com_type;
     Tick creation_time;
     Sys *owner;
@@ -441,7 +438,7 @@ public:
     int initial_data_size;
     StreamState state;
 
-    Tick last_vnet_change;
+    Tick last_phase_change;
 
     int test;
     int test2;
@@ -451,7 +448,7 @@ public:
     virtual void consume(RecvPacketEventHadndlerData *message)=0;
     virtual void init()=0;
 
-    BaseStream(int stream_num,Sys *owner,std::list<VnetInfo> vnets_to_go);
+    BaseStream(int stream_num,Sys *owner,std::list<CollectivePhase> phases_to_go);
     void declare_ready();
     bool is_ready();
     void consume_ready();
@@ -479,18 +476,8 @@ public:
 class StreamBaseline: public BaseStream
 {
 public:
-    std::list<MyPacket> packets;
-    Tick final_compute;
-    std::map<int,int> alltoall_synchronizer;
     bool initialized;
-
-    std::list<MyPacket*> locked_packets;
-
-    bool processed;
-    bool send_back;
-    bool NPU_to_MA;
-
-    StreamBaseline(Sys *owner,DataSet *dataset,int stream_num,std::list<VnetInfo> vnets_to_go);
+    StreamBaseline(Sys *owner,DataSet *dataset,int stream_num,std::list<CollectivePhase> phases_to_go);
     void init();
     void call(EventType event,CallData *data);
     void consume(RecvPacketEventHadndlerData *message);
@@ -498,7 +485,7 @@ public:
 };
 
 #include "Workload.hh"
-class VnetLevels;
+class QueueLevels;
 class Sys:public Callable
 {
 public:
@@ -524,16 +511,6 @@ public:
 
     CollectiveImplementation collectiveImplementation;
     CollectiveOptimization collectiveOptimization;
-
-    std::vector<int> local_vnets;
-    std::vector<int> vertical_vnets1;
-    std::vector<int> vertical_vnets2;
-    std::vector<int> horizontal_vnets1;
-    std::vector<int> horizontal_vnets2;
-    std::vector<int> perpendicular_vnets1;
-    std::vector<int> perpendicular_vnets2;
-    std::vector<int> fourth_vnets1;
-    std::vector<int> fourth_vnets2;
 
     std::chrono::high_resolution_clock::time_point start_sim_time;
     std::chrono::high_resolution_clock::time_point end_sim_time;
@@ -561,22 +538,20 @@ public:
     float comm_scale;
     int local_reduction_delay;
     uint64_t pending_events;
-
-    int workload_event_index;
     std::string method;
+
     //for test
     Workload *workload;
     MemBus *memBus;
-    int all_vnets;
+    int all_queues;
     //for supporting LIFO
     std::list<BaseStream*> ready_list;
     SchedulingPolicy scheduling_policy;
     int first_phase_streams;
     std::map<int,std::list<BaseStream*>> active_Streams;
     std::map<int,std::list<int>> stream_priorities;
-    std::map<int,int> FIFO_allocator;
 
-    VnetLevels *vLevels;
+    QueueLevels *vLevels;
     std::map<std::string,LogicalTopology*> logical_topologies;
     std::map<Tick,std::list<std::tuple<Callable*,EventType,CallData *>>> event_queue;
     static int total_nodes;
@@ -611,14 +586,12 @@ public:
     void schedule(int num);
 
 
-    void register_vnets(BaseStream *stream,std::list<VnetInfo> vnets_to_go);
+    void register_phases(BaseStream *stream,std::list<CollectivePhase> phases_to_go);
     void call(EventType type,CallData *data);
     void try_register_event(Callable *callable,EventType event,CallData *callData,Tick &cycles);
     void call_events();
     void workload_finished(){finished_workloads++;};
     static Tick boostedTick();
-    int get_next_node(int cuurent_node,int vnet_num);
-    int get_next_sender_node(int cuurent_node,int vnet_num);
     static void exiting();
     int nextPowerOf2(int n);
     static void sys_panic(std::string msg);
@@ -639,9 +612,9 @@ public:
     DataSet *generate_alltoall_all_to_all(int size);
     DataSet *generate_alltoall_all_reduce(int size);
     DataSet *generate_tree_all_reduce(int size);
-    DataSet *generate_hierarchichal_all_to_all(int size,bool local_run,bool vertical_run, bool horizontal_run, SchedulingPolicy pref_scheduling);
-    DataSet *generate_hierarchichal_all_reduce(int size,bool local_run, bool vertical_run, bool horizontal_run, SchedulingPolicy pref_scheduling);
-    DataSet *generate_hierarchichal_all_gather(int size,bool local_run, bool vertical_run, bool horizontal_run, SchedulingPolicy pref_scheduling);
+    DataSet *generate_hierarchical_all_to_all(int size,bool local_run,bool vertical_run, bool horizontal_run, SchedulingPolicy pref_scheduling);
+    DataSet *generate_hierarchical_all_reduce(int size,bool local_run, bool vertical_run, bool horizontal_run, SchedulingPolicy pref_scheduling);
+    DataSet *generate_hierarchical_all_gather(int size,bool local_run, bool vertical_run, bool horizontal_run, SchedulingPolicy pref_scheduling);
     void proceed_to_next_vnet_baseline(StreamBaseline *stream);
     static void handleEvent(void *arg);
     timespec_t generate_time(int cycles);
@@ -804,26 +777,26 @@ class AllToAll:public Ring{
         void process_max_count();
         int get_non_zero_latency_packets();
 };
-class VnetLevelHandler{
+class QueueLevelHandler{
     public:
-        std::vector<int> vnets;
+        std::vector<int> queues;
         int allocator;
         int first_allocator;
         int last_allocator;
         int level;
-        VnetLevelHandler(int level,int start,int end);
-        std::pair<int,Torus::Direction> get_next_vnet_number();
-        std::pair<int,Torus::Direction> get_next_vnet_number_first();
-        std::pair<int,Torus::Direction> get_next_vnet_number_last();
+        QueueLevelHandler(int level,int start,int end);
+        std::pair<int,Torus::Direction> get_next_queue_id();
+        std::pair<int,Torus::Direction> get_next_queue_id_first();
+        std::pair<int,Torus::Direction> get_next_queue_id_last();
 };
-class VnetLevels{
+class QueueLevels{
     public:
-        std::vector<VnetLevelHandler> levels;
-        std::pair<int,Torus::Direction> get_next_vnet_at_level(int level);
-        std::pair<int,Torus::Direction> get_next_vnet_at_level_first(int level);
-        std::pair<int,Torus::Direction> get_next_vnet_at_level_last(int level);
-        VnetLevels(int levels, int vnets_per_level,int offset);
-        VnetLevels(std::vector<int> lv,int offset);
+        std::vector<QueueLevelHandler> levels;
+        std::pair<int,Torus::Direction> get_next_queue_at_level(int level);
+        std::pair<int,Torus::Direction> get_next_queue_at_level_first(int level);
+        std::pair<int,Torus::Direction> get_next_queue_at_level_last(int level);
+        QueueLevels(int levels, int queues_per_level,int offset);
+        QueueLevels(std::vector<int> lv,int offset);
 };
 
 #endif
