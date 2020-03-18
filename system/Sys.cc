@@ -1081,7 +1081,7 @@ DataSet* Sys::generate_alltoall_all_to_all(int size){
         tmp=chunk_size;
         std::list<CollectivePhase> vect;
         std::pair<int,Torus::Direction> local_last;
-        if(collectiveImplementation!=CollectiveImplementation::DoubleBinaryTree && collectiveOptimization==CollectiveOptimization::LocalBWAware){
+        if(collectiveOptimization==CollectiveOptimization::LocalBWAware){
             local_last=vLevels->get_next_queue_at_level_first(0);
         }
         else{
@@ -1206,10 +1206,19 @@ DataSet* Sys::generate_tree_all_reduce(int size){
             //std::cout<<"initial chunk: "<<tmp<<std::endl;
         }
         if(local_dim>1){
-            std::pair<int,Torus::Direction> local_first=vLevels->get_next_queue_at_level(0);
-            CollectivePhase vn(this,local_first.first,new Ring(Ring::Type::AllReduce,id,(Torus*)bt,tmp,Torus::Dimension::Local,local_first.second,PacketRouting::Software,InjectionPolicy::Aggressive,boost_mode));
-            vect.push_back(vn);
-            tmp=vn.final_data_size;
+            std::pair<int,Torus::Direction> local_first;
+            if(collectiveOptimization==CollectiveOptimization::Baseline){
+                local_first=vLevels->get_next_queue_at_level(0);
+                CollectivePhase vn(this,local_first.first,new Ring(Ring::Type::AllReduce,id,(Torus*)bt,tmp,Torus::Dimension::Local,local_first.second,PacketRouting::Software,InjectionPolicy::Aggressive,boost_mode));
+                vect.push_back(vn);
+                tmp=vn.final_data_size;
+            }
+            else if(collectiveOptimization==CollectiveOptimization::LocalBWAware){
+                local_first=vLevels->get_next_queue_at_level_first(0);
+                CollectivePhase vn(this,local_first.first,new Ring(Ring::Type::ReduceScatter,id,(Torus*)bt,tmp,Torus::Dimension::Local,local_first.second,PacketRouting::Software,InjectionPolicy::Aggressive,boost_mode));
+                vect.push_back(vn);
+                tmp=vn.final_data_size;
+            }
         }
         if(id==0){
             //std::cout<<"tmp after phase 1: "<<tmp<<std::endl;
@@ -1219,6 +1228,15 @@ DataSet* Sys::generate_tree_all_reduce(int size){
             CollectivePhase vn(this,tree_queue_id.first,new DoubleBinaryTreeAllReduce(id,(BinaryTree *)bt,tmp,boost_mode));
             vect.push_back(vn);
             tmp=vn.final_data_size;
+        }
+        if(local_dim>1){
+            std::pair<int,Torus::Direction> local_last;
+            if(collectiveOptimization==CollectiveOptimization::LocalBWAware){
+                local_last=vLevels->get_next_queue_at_level_last(0);
+                CollectivePhase vn(this,local_last.first,new Ring(Ring::Type::AllGather,id,(Torus*)bt,tmp,Torus::Dimension::Local,local_last.second,PacketRouting::Software,InjectionPolicy::Aggressive,boost_mode));
+                vect.push_back(vn);
+                tmp=vn.final_data_size;
+            }
         }
         if(id==0){
             //std::cout<<"tmp after phase 2: "<<tmp<<std::endl;
