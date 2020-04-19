@@ -47,17 +47,15 @@ class FIFO;
 class BackwardLink;
 class DataSet;
 
-enum class ComType {None,Reduce_Scatter, All_Gatehr, All_Reduce, Exchange, Reduction,Forward,All_to_All,All_Reduce_All_to_All};
+enum class ComType {None,Reduce_Scatter, All_Gatehr, All_Reduce,All_to_All,All_Reduce_All_to_All};
 enum class CollectiveBarrier{Blocking,Non_Blocking};
-enum class SchedulingPolicy {LIFO,FIFO,None};
-enum class InjectionPolicy {Aggressive,Normal};
+enum class SchedulingPolicy {LIFO,FIFO,HIGHEST,None};
+enum class InjectionPolicy {Infinite,Aggressive,SemiAggressive,ExtraAggressive,Normal};
 enum class PacketRouting {Hardware,Software};
 enum class BusType {Both,Shared,Mem};
-enum class ParallelismPolicy {MicroBenchmark,Data,Transformer,DLRM};
 enum class StreamState {Created,Transferring,Ready,Executing,Zombie,Dead};
 enum class EventType {CallEvents,PacketReceived,WaitForVnetTurn,General,TX_DMA,RX_DMA,Wight_Grad_Comm_Finished,Input_Grad_Comm_Finished,Fwd_Comm_Finished,Wight_Grad_Comm_Finished_After_Delay,Input_Grad_Comm_Finished_After_Delay,Fwd_Comm_Finished_After_Delay,Workload_Wait,Reduction_Ready,Rec_Finished,Send_Finished,
     Processing_Finished,Delivered,NPU_to_MA,MA_to_NPU,Read_Port_Free,Write_Port_Free,Apply_Boost,Stream_Transfer_Started,Stream_Ready,Consider_Process,Consider_Retire,Consider_Send_Back,StreamInit,StreamsFinishedIncrease};
-enum class ALUState {Free, Forward, WriteBack, Forward_WriteBack, Reduction};
 
 
 class CallData{
@@ -382,6 +380,7 @@ public:
 };
 class MemBus{
     public:
+        enum class Transmition{Fast,Usual};
         LogGP *NPU_side;
         LogGP *MA_side;
         Sys *generator;
@@ -389,8 +388,8 @@ class MemBus{
         bool model_shared_bus;
         ~MemBus();
         MemBus(std::string side1,std::string side2,Sys *generator,Tick L,Tick o,Tick g,double G,bool model_shared_bus,int communication_delay,bool attach);
-        void send_from_NPU_to_MA(int bytes,bool processed,bool send_back,Callable *callable);
-        void send_from_MA_to_NPU(int bytes,bool processed,bool send_back,Callable *callable);
+        void send_from_NPU_to_MA(Transmition transmition,int bytes,bool processed,bool send_back,Callable *callable);
+        void send_from_MA_to_NPU(Transmition transmition,int bytes,bool processed,bool send_back,Callable *callable);
 };
 class Algorithm;
 class LogicalTopology;
@@ -436,7 +435,9 @@ public:
     DataSet *dataset;
     int steps_finished;
     int initial_data_size;
+    int priority;
     StreamState state;
+    bool initialized;
 
     Tick last_phase_change;
 
@@ -466,8 +467,9 @@ public:
     Sys *generator;
     BaseStream *stream;
     Tick creation_time;
-    PacketBundle(Sys *generator,BaseStream *stream,std::list<MyPacket*> locked_packets, bool processed, bool send_back, int size);
-    PacketBundle(Sys *generator,BaseStream *stream, bool processed, bool send_back, int size);
+    MemBus::Transmition transmition;
+    PacketBundle(Sys *generator,BaseStream *stream,std::list<MyPacket*> locked_packets, bool processed, bool send_back, int size,MemBus::Transmition transmition);
+    PacketBundle(Sys *generator,BaseStream *stream, bool processed, bool send_back, int size,MemBus::Transmition transmition);
     void send_to_MA();
     void send_to_NPU();
     void call(EventType event,CallData *data);
@@ -476,8 +478,7 @@ public:
 class StreamBaseline: public BaseStream
 {
 public:
-    bool initialized;
-    StreamBaseline(Sys *owner,DataSet *dataset,int stream_num,std::list<CollectivePhase> phases_to_go);
+    StreamBaseline(Sys *owner,DataSet *dataset,int stream_num,std::list<CollectivePhase> phases_to_go,int priority);
     void init();
     void call(EventType event,CallData *data);
     void consume(RecvPacketEventHadndlerData *message);
@@ -494,16 +495,17 @@ public:
             Sys *sys;
             int ready_list_threshold;
             int queue_threshold;
+            int max_running_streams;
             std::map<int,int> running_streams;
             std::map<int,std::list<BaseStream*>::iterator> stream_pointer;
-            SchedulerUnit(Sys *sys,std::vector<int> queues,int ready_list_threshold,int queue_threshold);
+            SchedulerUnit(Sys *sys,std::vector<int> queues,int max_running_streams,int ready_list_threshold,int queue_threshold);
             void notify_stream_removed(int vnet);
             void notify_stream_added(int vnet);
             void notify_stream_added_into_ready_list();
     };
     SchedulerUnit *scheduler_unit;
     enum class CollectiveOptimization{Baseline,LocalBWAware};
-    enum class CollectiveImplementation{AllToAll,HierarchicalRing,DoubleBinaryTree};
+    enum class CollectiveImplementation{AllToAll,DoubleBinaryTreeLocalAllToAll,HierarchicalRing,DoubleBinaryTree};
     ~Sys();
     CommonAPI *NI;
     int finished_workloads;
@@ -526,6 +528,7 @@ public:
     int vertical_queues;
     int horizontal_queues;int perpendicular_queues;
     int fourth_queues;
+    int priority_counter;
     bool boost_mode;
 
     int processing_latency;
@@ -536,6 +539,7 @@ public:
     InjectionPolicy injection_policy;
     float compute_scale;
     float comm_scale;
+    float injection_scale;
     int local_reduction_delay;
     uint64_t pending_events;
     std::string method;
@@ -548,6 +552,7 @@ public:
     std::list<BaseStream*> ready_list;
     SchedulingPolicy scheduling_policy;
     int first_phase_streams;
+    int total_running_streams;
     std::map<int,std::list<BaseStream*>> active_Streams;
     std::map<int,std::list<int>> stream_priorities;
 
@@ -582,7 +587,7 @@ public:
     void increase_finished_streams(int amount);
     void register_event(Callable *callable,EventType event,CallData *callData,int cycles);
     void insert_into_ready_list(BaseStream *stream);
-    void ask_for_schedule();
+    void ask_for_schedule(int max);
     void schedule(int num);
 
 
@@ -600,22 +605,26 @@ public:
     Sys(CommonAPI *NI,int id,int num_passes,int local_dim, int vertical_dim,int horizontal_dim,
              int perpendicular_dim,int fourth_dim,int local_queus,int vertical_queues,int horizontal_queues,
              int perpendicular_queues,int fourth_queues,std::string my_sys,
-             std::string my_workload,float comm_scale,float compute_scale,int total_stat_rows,int stat_row, std::string path,std::string run_name);
+             std::string my_workload,float comm_scale,float compute_scale,float injection_scale,int total_stat_rows,int stat_row, std::string path,std::string run_name);
 
     void iterate();
     void initialize_sys(std::string name);
     void parse_var(std::string var,std::string value);
     void post_process_inputs();
-    DataSet * generate_all_reduce(int size,bool local, bool vertical, bool horizontal,SchedulingPolicy pref_scheduling);
-    DataSet * generate_all_to_all(int size,bool local, bool vertical, bool horizontal,SchedulingPolicy pref_scheduling);
-    DataSet * generate_all_gather(int size,bool local, bool vertical, bool horizontal,SchedulingPolicy pref_scheduling);
-    DataSet *generate_alltoall_all_to_all(int size);
-    DataSet *generate_alltoall_all_reduce(int size);
-    DataSet *generate_tree_all_reduce(int size);
-    DataSet *generate_hierarchical_all_to_all(int size,bool local_run,bool vertical_run, bool horizontal_run, SchedulingPolicy pref_scheduling);
-    DataSet *generate_hierarchical_all_reduce(int size,bool local_run, bool vertical_run, bool horizontal_run, SchedulingPolicy pref_scheduling);
-    DataSet *generate_hierarchical_all_gather(int size,bool local_run, bool vertical_run, bool horizontal_run, SchedulingPolicy pref_scheduling);
+    static int get_layer_numbers(std::string workload_input);
+    DataSet * generate_all_reduce(int size,bool local, bool vertical, bool horizontal,SchedulingPolicy pref_scheduling,int layer);
+    DataSet * generate_all_to_all(int size,bool local, bool vertical, bool horizontal,SchedulingPolicy pref_scheduling,int layer);
+    DataSet * generate_all_gather(int size,bool local, bool vertical, bool horizontal,SchedulingPolicy pref_scheduling,int layer);
+    DataSet *generate_alltoall_all_to_all(int size,bool local_run, bool horizontal_run,SchedulingPolicy pref_scheduling,int layer);
+    DataSet *generate_alltoall_all_reduce(int size,bool local_run, bool horizontal_run,SchedulingPolicy pref_scheduling,int layer);
+    DataSet *generate_tree_all_reduce(int size,bool local_run, bool horizontal_run,SchedulingPolicy pref_scheduling,int layer);
+    DataSet *generate_hierarchical_all_to_all(int size,bool local_run,bool vertical_run, bool horizontal_run, SchedulingPolicy pref_scheduling,int layer);
+    DataSet *generate_hierarchical_all_reduce(int size,bool local_run, bool vertical_run, bool horizontal_run, SchedulingPolicy pref_scheduling,int layer);
+    DataSet *generate_hierarchical_all_gather(int size,bool local_run, bool vertical_run, bool horizontal_run, SchedulingPolicy pref_scheduling,int layer);
+    void insert_stream(std::list<BaseStream*> *queue,BaseStream *baseStream);
     void proceed_to_next_vnet_baseline(StreamBaseline *stream);
+    int determine_chunk_size(int size,ComType type);
+    int get_priority(SchedulingPolicy pref_scheduling);
     static void handleEvent(void *arg);
     timespec_t generate_time(int cycles);
 };
@@ -638,8 +647,8 @@ class LogicalTopology{
 };
 class Torus:public LogicalTopology{
     public:
-        enum Dimension{Local,Vertical,Horizontal,Perpendicular,Fourth};
-        enum Direction{Clockwise,Anticlockwise};
+        enum class Dimension{Local,Vertical,Horizontal,Perpendicular,Fourth};
+        enum class Direction{Clockwise,Anticlockwise};
         int id;
         int local_node_id;
         int right_node_id;
@@ -657,8 +666,8 @@ class Torus:public LogicalTopology{
 };
 class BinaryTree:public Torus{
     public:
-        enum TreeType{RootMax,RootMin};
-        enum Type{Leaf,Root,Intermediate};
+        enum class TreeType{RootMax,RootMin};
+        enum class Type{Leaf,Root,Intermediate};
         int total_tree_nodes;
         int start;
         TreeType tree_type;
@@ -695,7 +704,7 @@ class AllToAllTopology:public Torus{
 };
 class Algorithm:public Callable{
     public:
-        enum Name{Ring,DoubleBinaryTree,AllToAll};
+        enum class Name{Ring,DoubleBinaryTree,AllToAll};
         Name name;
         int id;
         BaseStream *stream;
@@ -704,7 +713,8 @@ class Algorithm:public Callable{
         int final_data_size;
         ComType comType;
         bool enabled;
-        Algorithm();
+        int layer_num;
+        Algorithm(int layer_num);
         virtual ~Algorithm()= default;
         virtual void run(EventType event,CallData *data)=0;
         virtual void exit();
@@ -713,9 +723,10 @@ class Algorithm:public Callable{
 };
 class Ring:public Algorithm{
     public:
-        enum Type{AllReduce,AllGather,ReduceScatter,AllToAll};
+        enum class Type{AllReduce,AllGather,ReduceScatter,AllToAll};
         Torus::Dimension dimension;
         Torus::Direction direction;
+        MemBus::Transmition transmition;
         int zero_latency_packets;
         int non_zero_latency_packets;
         int id;
@@ -734,15 +745,15 @@ class Ring:public Algorithm{
         bool toggle;
         long free_packets;
         long total_packets_sent;
+        long total_packets_received;
         int msg_size;
-
         std::list<MyPacket*> locked_packets;
         bool processed;
         bool send_back;
         bool NPU_to_MA;
 
-        Ring(Type type,int id,Torus *torus,int data_size,Torus::Dimension dimension, Torus::Direction direction,PacketRouting routing,InjectionPolicy injection_policy,bool boost_mode);
-        void run(EventType event,CallData *data);
+        Ring(Type type,int id,int layer_num,Torus *torus,int data_size,Torus::Dimension dimension, Torus::Direction direction,PacketRouting routing,InjectionPolicy injection_policy,bool boost_mode);
+        virtual void run(EventType event,CallData *data);
         void process_stream_count();
         //void call(EventType event,CallData *data);
         void release_packets();
@@ -757,7 +768,7 @@ class Ring:public Algorithm{
 };
 class DoubleBinaryTreeAllReduce:public Algorithm{
     public:
-        enum State{Begin,WaitingForTwoChildData,WaitingForOneChildData,SendingDataToParent,WaitingDataFromParent,SendingDataToChilds,End};
+        enum class State{Begin,WaitingForTwoChildData,WaitingForOneChildData,SendingDataToParent,WaitingDataFromParent,SendingDataToChilds,End};
         void run(EventType event,CallData *data);
         //void call(EventType event,CallData *data);
         //void exit();
@@ -768,12 +779,13 @@ class DoubleBinaryTreeAllReduce:public Algorithm{
         //BinaryTree *tree;
         BinaryTree::Type type;
         State state;
-        DoubleBinaryTreeAllReduce(int id,BinaryTree *tree,int data_size,bool boost_mode);
+        DoubleBinaryTreeAllReduce(int id,int layer_num,BinaryTree *tree,int data_size,bool boost_mode);
         //void init(BaseStream *stream);
 };
 class AllToAll:public Ring{
     public:
-        AllToAll(Type type,int id,AllToAllTopology *allToAllTopology,int data_size,Torus::Dimension dimension, Torus::Direction direction,PacketRouting routing,InjectionPolicy injection_policy,bool boost_mode);
+        AllToAll(Type type,int id,int layer_num,AllToAllTopology *allToAllTopology,int data_size,Torus::Dimension dimension, Torus::Direction direction,PacketRouting routing,InjectionPolicy injection_policy,bool boost_mode);
+        void run(EventType event,CallData *data);
         void process_max_count();
         int get_non_zero_latency_packets();
 };

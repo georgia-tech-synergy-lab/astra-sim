@@ -39,6 +39,7 @@ class Sys;
 class Callable;
 class StreamStat;
 #include "Sys.hh"
+enum class ParallelismPolicy {MicroBenchmark,Data,Transformer,DLRM,DLRMEnhanced,Model,Hybrid};
 #define FREQ (1000.0/CLOCK_PERIOD)
 class CSVWriter{
 public:
@@ -60,6 +61,7 @@ public:
 class Layer:public Callable,public StreamStat{
 public:
     std::string id;
+    int layer_num;
     Sys *generator;
     Workload *workload;
 
@@ -115,7 +117,7 @@ public:
     CollectiveBarrier wg_barrier;
     CollectiveBarrier ig_barrier;
 
-    Layer(std::string id,Sys *generator,Workload *workload,int fwd_pass_compute_time,ComType fwd_pass_comm_type,
+    Layer(std::string id,int layer_num,Sys *generator,Workload *workload,int fwd_pass_compute_time,ComType fwd_pass_comm_type,
           int fwd_pass_comm_size,int input_grad_compute_time,ComType input_grad_comm_type,int input_grad_comm_size,
           int weight_grad_compute_time,ComType weight_grad_comm_type,int weight_grad_comm_size,int weight_grad_update_time);
     void call(EventType event,CallData *mdata);
@@ -131,7 +133,7 @@ public:
     bool is_fwd_pass_comm_finished_blocking();
     bool is_input_grad_comm_finished_blocking();
     bool is_weight_grad_comm_finished_blocking();
-    void report(std::string run_name,int layer_num,int total_rows,int stat_row,CSVWriter *detailed,CSVWriter *EndToEnd);
+    void report(std::string run_name,int layer_num,int total_rows,int stat_row,CSVWriter *detailed,CSVWriter *EndToEnd,double &total_compute,double &total_exposed);
     void issue_forward_pass_comm(bool local,bool vertical,bool horizontal,SchedulingPolicy pref_scheduling,
                                  CollectiveBarrier barrier);
     void issue_input_grad_comm(bool local,bool vertical,bool horizontal,SchedulingPolicy pref_scheduling,
@@ -168,11 +170,14 @@ public:
     void iterate_data_parallel();
     void iterate_hybrid_parallel_Transformer();
     void iterate_hybrid_parallel_DLRM();
+    void iterate_hybrid_parallel();
+    void iterate_model_parallel();
     void initialize_workload(std::string name);
     void initialize_stat_files();
     void fire();
     void report();
     void check_for_sim_end();
+    static int get_layer_numbers(std::string workload_input);
     CSVWriter *detailed;
     CSVWriter *end_to_end;
     std::string path;

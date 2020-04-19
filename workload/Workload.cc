@@ -185,10 +185,11 @@ void CSVWriter::write_cell(int row, int column,std::string data) {
     return;
 }*/
 int DataSet::id_auto_increment=0;
-Layer::Layer(std::string id,Sys *generator,Workload *workload,int fwd_pass_compute_time,ComType fwd_pass_comm_type,
+Layer::Layer(std::string id,int layer_num,Sys *generator,Workload *workload,int fwd_pass_compute_time,ComType fwd_pass_comm_type,
     int fwd_pass_comm_size,int input_grad_compute_time,ComType input_grad_comm_type,int input_grad_comm_size,
     int weight_grad_compute_time,ComType weight_grad_comm_type,int weight_grad_comm_size,int weight_grad_update_time){
     this->id=id;
+    this->layer_num=layer_num;
     this->generator=generator;
     this->workload=workload;
     this->fwd_pass_compute_time=fwd_pass_compute_time;
@@ -420,7 +421,7 @@ bool Layer::is_weight_grad_comm_finished_blocking(){
     this->started_waiting_for_weight_grad.push_back(Sys::boostedTick());
     return false;
 }
-void Layer::report(std::string run_name,int layer_num,int total_rows,int stat_row,CSVWriter *detailed,CSVWriter *EndToEnd){
+void Layer::report(std::string run_name,int layer_num,int total_rows,int stat_row,CSVWriter *detailed,CSVWriter *EndToEnd,double &total_compute,double &total_exposed){
     take_stream_stats_average();
     std::cout<<"*******************"<<std::endl;
     std::cout<<"Layer id: "<<id<<std::endl;
@@ -445,36 +446,42 @@ void Layer::report(std::string run_name,int layer_num,int total_rows,int stat_ro
         EndToEnd->write_cell(0,2,"fwd compute");
     }
     EndToEnd->write_cell(layer_num*total_rows+1+stat_row,2,std::to_string(total_forward_pass_compute/FREQ));
+    total_compute+=(total_forward_pass_compute/FREQ);
 
     std::cout<<"id: "<<id<<" ,Total cycles spent on weight grad compute: "<<total_weight_grad_compute<<std::endl;
     if(stat_row==0 && layer_num==0){
         EndToEnd->write_cell(0,3,"wg compute");
     }
     EndToEnd->write_cell(layer_num*total_rows+1+stat_row,3,std::to_string(total_weight_grad_compute/FREQ));
+    total_compute+=(total_weight_grad_compute/FREQ);
 
     std::cout<<"id: "<<id<<" ,Total cycles spent on input grad compute: "<<total_input_grad_compute<<std::endl;
     if(stat_row==0 && layer_num==0){
         EndToEnd->write_cell(0,4,"ig compute");
     }
     EndToEnd->write_cell(layer_num*total_rows+1+stat_row,4,std::to_string(total_input_grad_compute/FREQ));
+    total_compute+=(total_input_grad_compute/FREQ);
 
     std::cout<<"id: "<<id<<" ,Total cycles spent idle waiting for fwd finish: "<<total_waiting_for_fwd_comm<<std::endl;
     if(stat_row==0 && layer_num==0){
         EndToEnd->write_cell(0,5,"fwd exposed comm");
     }
     EndToEnd->write_cell(layer_num*total_rows+1+stat_row,5,std::to_string(total_waiting_for_fwd_comm/FREQ));
+    total_exposed+=(total_waiting_for_fwd_comm/FREQ);
 
     std::cout<<"id: "<<id<<" ,Total cycles spent idle waiting for wg finish: "<<total_waiting_for_wg_comm<<std::endl;
     if(stat_row==0 && layer_num==0){
         EndToEnd->write_cell(0,6,"wg exposed comm");
     }
     EndToEnd->write_cell(layer_num*total_rows+1+stat_row,6,std::to_string(total_waiting_for_wg_comm/FREQ));
+    total_exposed+=(total_waiting_for_wg_comm/FREQ);
 
     std::cout<<"id: "<<id<<" ,Total cycles spent idle waiting for ig finish: "<<total_waiting_for_ig_comm<<std::endl;
     if(stat_row==0 && layer_num==0){
         EndToEnd->write_cell(0,7,"ig exposed comm");
     }
     EndToEnd->write_cell(layer_num*total_rows+1+stat_row,7,std::to_string(total_waiting_for_ig_comm/FREQ));
+    total_exposed+=(total_waiting_for_ig_comm/FREQ);
 
     std::cout<<"id: "<<id<<" ,Total cycles spent on fwd pass comm: "<<total_fwd_comm<<std::endl;
     if(stat_row==0 && layer_num==0){
@@ -498,7 +505,14 @@ void Layer::report(std::string run_name,int layer_num,int total_rows,int stat_ro
         EndToEnd->write_cell(0,11,"all comm finished");
     }
     EndToEnd->write_cell(layer_num*total_rows+1+stat_row,11,std::to_string(((double)Sys::boostedTick())/FREQ));
-
+    if(layer_num==workload->SIZE-1){
+        if(stat_row==0){
+            EndToEnd->write_cell(0,12,"total comp");
+            EndToEnd->write_cell(0,13,"total exposed comm");
+        }
+        EndToEnd->write_cell(1+stat_row,12,std::to_string(total_compute));
+        EndToEnd->write_cell(1+stat_row,13,std::to_string(total_exposed));
+    }
 
     std::cout<<"*************************  Shared bus stats  ************************* "<<id<<std::endl;
     std::cout<<"id: "<<id<<" ,Average cycles spent on shared bus queue delay for transfer (per message): "<<total_shared_bus_transfer_queue_delay<<std::endl;
@@ -573,23 +587,23 @@ void Layer::issue_forward_pass_comm(bool local,bool vertical,bool horizontal,Sch
     fwd_barrier=barrier;
     collective_counter++;
     if(fwd_pass_comm_type==ComType::All_Reduce){
-        fp=generator->generate_all_reduce(fwd_pass_comm_size,local,vertical,horizontal,pref_scheduling);
+        fp=generator->generate_all_reduce(fwd_pass_comm_size,local,vertical,horizontal,pref_scheduling,layer_num);
         if(generator->id==0) {
             std::cout<<"info: allreduce forward pass collective issued for layer: "<<id<<std::endl;
         }
     }
     else if(fwd_pass_comm_type==ComType::All_to_All){
-        fp=generator->generate_all_to_all(fwd_pass_comm_size,local,vertical,horizontal,pref_scheduling);
+        fp=generator->generate_all_to_all(fwd_pass_comm_size,local,vertical,horizontal,pref_scheduling,layer_num);
     }
     else if(fwd_pass_comm_type==ComType::All_Gatehr){
-        fp=generator->generate_all_gather(fwd_pass_comm_size,local,vertical,horizontal,pref_scheduling);
+        fp=generator->generate_all_gather(fwd_pass_comm_size,local,vertical,horizontal,pref_scheduling,layer_num);
         if(generator->id==0) {
             std::cout<<"info: allgather forward pass collective issued for layer: "<<id<<std::endl;
         }
     }
     else if(fwd_pass_comm_type==ComType::All_Reduce_All_to_All){
-        fp=generator->generate_all_reduce(fwd_pass_comm_size,local,vertical,horizontal,pref_scheduling);
-        fp2=generator->generate_all_to_all(lookup_table_size,local,vertical,horizontal,pref_scheduling);
+        fp=generator->generate_all_reduce(fwd_pass_comm_size,local,vertical,horizontal,pref_scheduling,layer_num);
+        fp2=generator->generate_all_to_all(lookup_table_size,local,vertical,horizontal,pref_scheduling,layer_num);
     }
     else if(fwd_pass_comm_type==ComType::None){
         collective_counter--;
@@ -618,23 +632,23 @@ void Layer::issue_input_grad_comm(bool local,bool vertical,bool horizontal,Sched
     ig_barrier=barrier;
     collective_counter++;
     if(input_grad_comm_type==ComType::All_Reduce){
-        ig=generator->generate_all_reduce(input_grad_comm_size,local,vertical,horizontal,pref_scheduling);
+        ig=generator->generate_all_reduce(input_grad_comm_size,local,vertical,horizontal,pref_scheduling,layer_num);
         if(generator->id==0) {
             std::cout<<"info: allreduce input grad collective issued for layer: "<<id<<std::endl;
         }
     }
     else if(input_grad_comm_type==ComType::All_to_All){
-        ig=generator->generate_all_to_all(input_grad_comm_size,local,vertical,horizontal,pref_scheduling);
+        ig=generator->generate_all_to_all(input_grad_comm_size,local,vertical,horizontal,pref_scheduling,layer_num);
     }
     else if(input_grad_comm_type==ComType::All_Gatehr){
-        ig=generator->generate_all_gather(input_grad_comm_size,local,vertical,horizontal,pref_scheduling);
+        ig=generator->generate_all_gather(input_grad_comm_size,local,vertical,horizontal,pref_scheduling,layer_num);
         if(generator->id==0) {
             std::cout<<"info: allgather input grad collective issued for layer: "<<id<<std::endl;
         }
     }
     else if(input_grad_comm_type==ComType::All_Reduce_All_to_All){
-        ig=generator->generate_all_reduce(input_grad_comm_size,local,vertical,horizontal,pref_scheduling);
-        ig2=generator->generate_all_to_all(lookup_table_size,local,vertical,horizontal,pref_scheduling);
+        ig=generator->generate_all_reduce(input_grad_comm_size,local,vertical,horizontal,pref_scheduling,layer_num);
+        ig2=generator->generate_all_to_all(lookup_table_size,local,vertical,horizontal,pref_scheduling,layer_num);
     }
     else if(input_grad_comm_type==ComType::None){
         collective_counter--;
@@ -666,23 +680,23 @@ void Layer::issue_weight_grad_comm(bool local,bool vertical,bool horizontal,Sche
     wg_barrier=barrier;
     collective_counter++;
     if(weight_grad_comm_type==ComType::All_Reduce){
-        wg=generator->generate_all_reduce(weight_grad_comm_size,local,vertical,horizontal,pref_scheduling);
+        wg=generator->generate_all_reduce(weight_grad_comm_size,local,vertical,horizontal,pref_scheduling,layer_num);
         if(generator->id==0) {
             std::cout<<"info: allreduce weight grad collective issued for layer: "<<id<<" with size: "<<weight_grad_comm_size<<std::endl;
         }
     }
     else if(weight_grad_comm_type==ComType::All_to_All){
-        wg=generator->generate_all_to_all(weight_grad_comm_size,local,vertical,horizontal,pref_scheduling);
+        wg=generator->generate_all_to_all(weight_grad_comm_size,local,vertical,horizontal,pref_scheduling,layer_num);
     }
     else if(weight_grad_comm_type==ComType::All_Gatehr){
-        wg=generator->generate_all_gather(weight_grad_comm_size,local,vertical,horizontal,pref_scheduling);
+        wg=generator->generate_all_gather(weight_grad_comm_size,local,vertical,horizontal,pref_scheduling,layer_num);
         if(generator->id==0) {
             std::cout<<"info: allgather weight grad collective issued for layer: "<<id<<std::endl;
         }
     }
     else if(weight_grad_comm_type==ComType::All_Reduce_All_to_All){
-        wg=generator->generate_all_reduce(weight_grad_comm_size,local,vertical,horizontal,pref_scheduling);
-        wg2=generator->generate_all_to_all(lookup_table_size,local,vertical,horizontal,pref_scheduling);
+        wg=generator->generate_all_reduce(weight_grad_comm_size,local,vertical,horizontal,pref_scheduling,layer_num);
+        wg2=generator->generate_all_to_all(lookup_table_size,local,vertical,horizontal,pref_scheduling,layer_num);
     }
     else if(weight_grad_comm_type==ComType::None){
         collective_counter--;
@@ -756,11 +770,15 @@ void Workload::iterate() {
         iterate_data_parallel();
     } else if (parallelismPolicy == ParallelismPolicy::Transformer) {
         iterate_hybrid_parallel_Transformer();
-    } else if (parallelismPolicy == ParallelismPolicy::DLRM) {
+    } else if (parallelismPolicy == ParallelismPolicy::DLRM || parallelismPolicy==ParallelismPolicy::DLRMEnhanced) {
         iterate_hybrid_parallel_DLRM();
     } else if (parallelismPolicy == ParallelismPolicy::MicroBenchmark) {
         iterate_micro_benchmark();
-    } else {
+    } else if (parallelismPolicy == ParallelismPolicy::Model) {
+        iterate_model_parallel();
+    } else if (parallelismPolicy == ParallelismPolicy::Hybrid) {
+        iterate_hybrid_parallel();
+    }else {
         Sys::sys_panic("No known parallelism!");
     }
 }
@@ -774,17 +792,23 @@ void Workload::call(EventType event, CallData *data) {
         iterate_data_parallel();
     } else if (parallelismPolicy == ParallelismPolicy::Transformer) {
         iterate_hybrid_parallel_Transformer();
-    } else if (parallelismPolicy == ParallelismPolicy::DLRM) {
+    } else if (parallelismPolicy == ParallelismPolicy::DLRM || parallelismPolicy==ParallelismPolicy::DLRMEnhanced) {
         iterate_hybrid_parallel_DLRM();
     } else if (parallelismPolicy == ParallelismPolicy::MicroBenchmark) {
         iterate_micro_benchmark();
-    } else {
+    } else if (parallelismPolicy == ParallelismPolicy::Model) {
+        iterate_model_parallel();
+    } else if (parallelismPolicy == ParallelismPolicy::Hybrid) {
+        iterate_hybrid_parallel();
+    }else {
         Sys::sys_panic("No known parallelism!");
     }
 }
 void Workload::report() {
+    double total_compute=0;
+    double total_exposed=0;
     for (int i = 0; i < SIZE; i++) {
-        layers[i]->report(run_name,i,total_rows,stat_row,detailed,end_to_end);
+        layers[i]->report(run_name,i,total_rows,stat_row,detailed,end_to_end,total_compute,total_exposed);
     }
     std::cout << "*************************" << std::endl;
     std::cout << "all passes finished at time: " << Sys::boostedTick()
@@ -898,7 +922,197 @@ void Workload::iterate_data_parallel() {
         return;
     }
 }
-
+void Workload::iterate_hybrid_parallel() {
+    assert(index >= 0);
+    assert(index < SIZE);
+    check_for_sim_end();
+    if (current_state == LoopState::Forward_Pass) {
+        if (!layers[index]->is_weight_grad_comm_finished_blocking()) {
+            return;
+        }
+        if (delay_loaded == false) {
+            counter = layers[index]->get_fwd_pass_compute();
+            if (generator->id == 0) {
+                //std::cout<<"layer: "<<index<<" delay in cycles: "<<counter<<std::endl;
+            }
+            delay_loaded = true;
+        }
+        if (counter > 0) {
+            if (generator->id == 0) {
+                //std::cout<<"i have been called in cycles: "<<Sys::boostedTick()<<std::endl;
+            }
+            generator->try_register_event(this, EventType::Workload_Wait, NULL, counter);
+            return;
+        }
+        if (!collective_issued) {
+            collective_issued = true;
+            layers[index]->issue_forward_pass_comm(true, false, false, SchedulingPolicy::None,
+                                                   CollectiveBarrier::Blocking);
+            return;
+        }
+        if (generator->id == 0) {
+            //std::cout<<"moving to the fwp layer:"<<index<<" ,at time: "<<Sys::boostedTick()<<std::endl;
+        }
+        index++;
+        delay_loaded = false;
+        collective_issued = false;
+        if (index >= SIZE) {
+            current_state = LoopState::Input_Gradient;
+            index--;
+        }
+        generator->register_event(this, EventType::General, NULL, 1);
+        return;
+    } else if (current_state == LoopState::Weight_Gradient) {
+        if (delay_loaded == false) {
+            counter = layers[index]->get_weight_grad_compute();
+            delay_loaded = true;
+        }
+        if (counter > 0) {
+            generator->try_register_event(this, EventType::Workload_Wait, NULL, counter);
+            return;
+        }
+        if (!collective_issued) {
+            collective_issued = true;
+            layers[index]->issue_weight_grad_comm(false, true, true, SchedulingPolicy::FIFO,
+                                                  CollectiveBarrier::Non_Blocking);
+        }
+        if (!layers[index]->is_input_grad_comm_finished_blocking()) {
+            //layers[index]->increment_waiting_for_ig();
+            //generator->register_event(this, EventType::General, NULL, 1);
+            return;
+        }
+        collective_issued = false;
+        delay_loaded = false;
+        if (index >= 0) {
+            index--;
+        }
+        if (index == -1) {
+            index=0;
+            if (generator->id == 0) {
+                std::cout << "pass: " << pass_counter << " finished at time: " << Sys::boostedTick()
+                          << std::endl;
+            }
+            pass_counter++;
+            current_state = LoopState::Forward_Pass;
+        } else {
+            current_state = LoopState::Input_Gradient;
+        }
+        generator->register_event(this, EventType::General, NULL, 1);
+        return;
+    } else if (current_state == LoopState::Input_Gradient) {
+        if (delay_loaded == false) {
+            counter = layers[index]->get_input_grad_compute();
+            delay_loaded = true;
+        }
+        if (counter > 0) {
+            generator->try_register_event(this, EventType::Workload_Wait, NULL, counter);
+            return;
+        }
+        if (!collective_issued && index > 0) {
+            collective_issued = true;
+            layers[index]->issue_input_grad_comm(true, false, false, SchedulingPolicy::LIFO,
+                                                 CollectiveBarrier::Non_Blocking);
+        }
+        collective_issued = false;
+        delay_loaded = false;
+        current_state = LoopState::Weight_Gradient;
+        generator->register_event(this, EventType::General, NULL, 1);
+        return;
+    }
+}
+void Workload::iterate_model_parallel() {
+    assert(index >= 0);
+    assert(index < SIZE);
+    check_for_sim_end();
+    if (current_state == LoopState::Forward_Pass) {
+        if (!layers[index]->is_weight_grad_comm_finished_blocking()) {
+            return;
+        }
+        if (delay_loaded == false) {
+            counter = layers[index]->get_fwd_pass_compute();
+            if (generator->id == 0) {
+                //std::cout<<"layer: "<<index<<" delay in cycles: "<<counter<<std::endl;
+            }
+            delay_loaded = true;
+        }
+        if (counter > 0) {
+            if (generator->id == 0) {
+                //std::cout<<"i have been called in cycles: "<<Sys::boostedTick()<<std::endl;
+            }
+            generator->try_register_event(this, EventType::Workload_Wait, NULL, counter);
+            return;
+        }
+        if (!collective_issued) {
+            collective_issued = true;
+            layers[index]->issue_forward_pass_comm(true, true, true, SchedulingPolicy::None,
+                                                   CollectiveBarrier::Blocking);
+            return;
+        }
+        if (generator->id == 0) {
+            //std::cout<<"moving to the fwp layer:"<<index<<" ,at time: "<<Sys::boostedTick()<<std::endl;
+        }
+        index++;
+        delay_loaded = false;
+        collective_issued = false;
+        if (index >= SIZE) {
+            current_state = LoopState::Input_Gradient;
+            index--;
+        }
+        generator->register_event(this, EventType::General, NULL, 1);
+        return;
+    } else if (current_state == LoopState::Weight_Gradient) {
+        if (delay_loaded == false) {
+            counter = layers[index]->get_weight_grad_compute();
+            delay_loaded = true;
+        }
+        if (counter > 0) {
+            generator->try_register_event(this, EventType::Workload_Wait, NULL, counter);
+            return;
+        }
+        if (!layers[index]->is_input_grad_comm_finished_blocking()) {
+            //layers[index]->increment_waiting_for_ig();
+            //generator->register_event(this, EventType::General, NULL, 1);
+            return;
+        }
+        collective_issued = false;
+        delay_loaded = false;
+        if (index >= 0) {
+            index--;
+        }
+        if (index == -1) {
+            index=0;
+            if (generator->id == 0) {
+                std::cout << "pass: " << pass_counter << " finished at time: " << Sys::boostedTick()
+                          << std::endl;
+            }
+            pass_counter++;
+            current_state = LoopState::Forward_Pass;
+        } else {
+            current_state = LoopState::Input_Gradient;
+        }
+        generator->register_event(this, EventType::General, NULL, 1);
+        return;
+    } else if (current_state == LoopState::Input_Gradient) {
+        if (delay_loaded == false) {
+            counter = layers[index]->get_input_grad_compute();
+            delay_loaded = true;
+        }
+        if (counter > 0) {
+            generator->try_register_event(this, EventType::Workload_Wait, NULL, counter);
+            return;
+        }
+        if (!collective_issued && index > 0) {
+            collective_issued = true;
+            layers[index]->issue_input_grad_comm(true, true, true, SchedulingPolicy::LIFO,
+                                                 CollectiveBarrier::Non_Blocking);
+        }
+        collective_issued = false;
+        delay_loaded = false;
+        current_state = LoopState::Weight_Gradient;
+        generator->register_event(this, EventType::General, NULL, 1);
+        return;
+    }
+}
 void Workload::iterate_hybrid_parallel_Transformer() {
     assert(index >= 0);
     assert(index < SIZE);
@@ -1027,7 +1241,7 @@ void Workload::iterate_hybrid_parallel_DLRM() {
         }
         if (!collective_issued && layers[index]->fwd_pass_comm_type == ComType::All_to_All) {
             collective_issued = true;
-            layers[index]->issue_forward_pass_comm(true, true, true, SchedulingPolicy::None,
+            layers[index]->issue_forward_pass_comm(true, true, true, SchedulingPolicy::HIGHEST,
                                                    CollectiveBarrier::Non_Blocking);
 
         } else if (index == DLRM_LAST_BOTTOM_LAYER) {
@@ -1066,7 +1280,7 @@ void Workload::iterate_hybrid_parallel_DLRM() {
             layers[index]->issue_weight_grad_comm(true, true, true, SchedulingPolicy::None,
                                                   CollectiveBarrier::Non_Blocking);
         }
-        if (!layers[index]->is_input_grad_comm_finished_blocking()) {
+        if (parallelismPolicy==ParallelismPolicy::DLRM && !layers[index]->is_input_grad_comm_finished_blocking()) {
             //layers[index]->increment_waiting_for_ig();
             //generator->register_event(this, EventType::General, NULL, 1);
             return;
@@ -1094,7 +1308,7 @@ void Workload::iterate_hybrid_parallel_DLRM() {
             return;
         }
         if (index == DLRM_LAST_BOTTOM_LAYER+1) {
-            layers[0]->issue_input_grad_comm(true, true, true, SchedulingPolicy::LIFO,
+            layers[0]->issue_input_grad_comm(true, true, true, SchedulingPolicy::HIGHEST,
                                              CollectiveBarrier::Non_Blocking);
         }
         index--;
@@ -1107,7 +1321,21 @@ void Workload::iterate_hybrid_parallel_DLRM() {
         generator->register_event(this, EventType::General, NULL, 1);
     }
 }
-
+int Workload::get_layer_numbers(std::string workload_input) {
+    std::ifstream inFile;
+    inFile.open("workload_inputs/" + workload_input +".txt");
+    if (!inFile) {
+        std::cout << "Unable to open file: " << workload_input << std::endl;
+    } else {
+        std::cout << "success in openning file" << std::endl;
+    }
+    std::string dummyLine;
+    std::getline(inFile, dummyLine);
+    int layers;
+    inFile >> layers;
+    inFile.close();
+    return layers;
+}
 void Workload::initialize_workload(std::string name) {
     std::ifstream inFile;
     inFile.open("workload_inputs/" + name);
@@ -1123,13 +1351,23 @@ void Workload::initialize_workload(std::string name) {
         parallelismPolicy = ParallelismPolicy::Data;
     } else if (type == "HYBRID_TRANSFORMER") {
         parallelismPolicy = ParallelismPolicy::Transformer;
-    } else if (type == "HYBRID_DLRM") {
-        parallelismPolicy = ParallelismPolicy::DLRM;
+    } else if (type == "HYBRID_DLRM" || type == "HYBRID_DLRM_ENHANCED") {
+        if(type == "HYBRID_DLRM"){
+            parallelismPolicy = ParallelismPolicy::DLRM;
+        }
+        else if(type == "HYBRID_DLRM_ENHANCED"){
+            parallelismPolicy=ParallelismPolicy ::DLRMEnhanced;
+        }
         inFile >> DLRM_LAST_BOTTOM_LAYER;
         if(generator->id==0){
             std::cout<<"****************** info: DLRM workload last bottom layer is: "<<DLRM_LAST_BOTTOM_LAYER<<std::endl;
         }
-    } else if (type == "MICRO") {
+    }
+    else if (type == "MODEL") {
+        parallelismPolicy = ParallelismPolicy::Model;
+    }else if (type == "HYBRID") {
+        parallelismPolicy = ParallelismPolicy::Hybrid;
+    }else if (type == "MICRO") {
         parallelismPolicy = ParallelismPolicy::MicroBenchmark;
     }
 
@@ -1205,7 +1443,7 @@ void Workload::initialize_workload(std::string name) {
             std::cout << "id: " << id << " , depen: " << depen << " , wg_comp_time: " << wg_compute_time
                       << std::endl;
         }
-        Layer *l = new Layer(id, generator,this ,fp_compute_time * generator->compute_scale, fp_type,
+        Layer *l = new Layer(id,i, generator,this ,fp_compute_time * generator->compute_scale, fp_type,
                              fp_comm_size * generator->comm_scale, ig_compute_time * generator->compute_scale,
                              ig_type,
                              ig_comm_size * generator->comm_scale, wg_compute_time * generator->compute_scale,
