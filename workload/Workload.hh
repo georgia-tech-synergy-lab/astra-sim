@@ -39,7 +39,7 @@ class Sys;
 class Callable;
 class StreamStat;
 #include "Sys.hh"
-enum class ParallelismPolicy {MicroBenchmark,Data,Transformer,DLRM,DLRMEnhanced,Model,Hybrid};
+enum class ParallelismPolicy {MicroBenchmark,Data,Transformer,DLRM,DLRMEnhanced,Model,HybridDataModel,HybridModelData};
 #define FREQ (1000.0/CLOCK_PERIOD)
 class CSVWriter{
 public:
@@ -170,7 +170,8 @@ public:
     void iterate_data_parallel();
     void iterate_hybrid_parallel_Transformer();
     void iterate_hybrid_parallel_DLRM();
-    void iterate_hybrid_parallel();
+    void iterate_hybrid_parallel_data_model();
+    void iterate_hybrid_parallel_model_data();
     void iterate_model_parallel();
     void initialize_workload(std::string name);
     void initialize_stat_files();

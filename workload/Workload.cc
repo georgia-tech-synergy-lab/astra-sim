@@ -776,9 +776,12 @@ void Workload::iterate() {
         iterate_micro_benchmark();
     } else if (parallelismPolicy == ParallelismPolicy::Model) {
         iterate_model_parallel();
-    } else if (parallelismPolicy == ParallelismPolicy::Hybrid) {
-        iterate_hybrid_parallel();
-    }else {
+    } else if (parallelismPolicy == ParallelismPolicy::HybridDataModel) {
+        iterate_hybrid_parallel_data_model();
+    }else if (parallelismPolicy == ParallelismPolicy::HybridModelData) {
+        iterate_hybrid_parallel_model_data();
+    }
+    else {
         Sys::sys_panic("No known parallelism!");
     }
 }
@@ -798,8 +801,10 @@ void Workload::call(EventType event, CallData *data) {
         iterate_micro_benchmark();
     } else if (parallelismPolicy == ParallelismPolicy::Model) {
         iterate_model_parallel();
-    } else if (parallelismPolicy == ParallelismPolicy::Hybrid) {
-        iterate_hybrid_parallel();
+    } else if (parallelismPolicy == ParallelismPolicy::HybridDataModel) {
+        iterate_hybrid_parallel_data_model();
+    }else if (parallelismPolicy == ParallelismPolicy::HybridModelData) {
+        iterate_hybrid_parallel_model_data();
     }else {
         Sys::sys_panic("No known parallelism!");
     }
@@ -922,7 +927,7 @@ void Workload::iterate_data_parallel() {
         return;
     }
 }
-void Workload::iterate_hybrid_parallel() {
+void Workload::iterate_hybrid_parallel_data_model() {
     assert(index >= 0);
     assert(index < SIZE);
     check_for_sim_end();
@@ -1011,6 +1016,104 @@ void Workload::iterate_hybrid_parallel() {
         if (!collective_issued && index > 0) {
             collective_issued = true;
             layers[index]->issue_input_grad_comm(true, false, false, SchedulingPolicy::LIFO,
+                                                 CollectiveBarrier::Non_Blocking);
+        }
+        collective_issued = false;
+        delay_loaded = false;
+        current_state = LoopState::Weight_Gradient;
+        generator->register_event(this, EventType::General, NULL, 1);
+        return;
+    }
+}
+void Workload::iterate_hybrid_parallel_model_data() {
+    assert(index >= 0);
+    assert(index < SIZE);
+    check_for_sim_end();
+    if (current_state == LoopState::Forward_Pass) {
+        if (!layers[index]->is_weight_grad_comm_finished_blocking()) {
+            return;
+        }
+        if (delay_loaded == false) {
+            counter = layers[index]->get_fwd_pass_compute();
+            if (generator->id == 0) {
+                //std::cout<<"layer: "<<index<<" delay in cycles: "<<counter<<std::endl;
+            }
+            delay_loaded = true;
+        }
+        if (counter > 0) {
+            if (generator->id == 0) {
+                //std::cout<<"i have been called in cycles: "<<Sys::boostedTick()<<std::endl;
+            }
+            generator->try_register_event(this, EventType::Workload_Wait, NULL, counter);
+            return;
+        }
+        if (!collective_issued) {
+            collective_issued = true;
+            layers[index]->issue_forward_pass_comm(false, true, true, SchedulingPolicy::None,
+                                                   CollectiveBarrier::Blocking);
+            return;
+        }
+        if (generator->id == 0) {
+            //std::cout<<"moving to the fwp layer:"<<index<<" ,at time: "<<Sys::boostedTick()<<std::endl;
+        }
+        index++;
+        delay_loaded = false;
+        collective_issued = false;
+        if (index >= SIZE) {
+            current_state = LoopState::Input_Gradient;
+            index--;
+        }
+        generator->register_event(this, EventType::General, NULL, 1);
+        return;
+    } else if (current_state == LoopState::Weight_Gradient) {
+        if (delay_loaded == false) {
+            counter = layers[index]->get_weight_grad_compute();
+            delay_loaded = true;
+        }
+        if (counter > 0) {
+            generator->try_register_event(this, EventType::Workload_Wait, NULL, counter);
+            return;
+        }
+        if (!collective_issued) {
+            collective_issued = true;
+            layers[index]->issue_weight_grad_comm(true, false, false, SchedulingPolicy::FIFO,
+                                                  CollectiveBarrier::Non_Blocking);
+        }
+        if (!layers[index]->is_input_grad_comm_finished_blocking()) {
+            //layers[index]->increment_waiting_for_ig();
+            //generator->register_event(this, EventType::General, NULL, 1);
+            return;
+        }
+        collective_issued = false;
+        delay_loaded = false;
+        if (index >= 0) {
+            index--;
+        }
+        if (index == -1) {
+            index=0;
+            if (generator->id == 0) {
+                std::cout << "pass: " << pass_counter << " finished at time: " << Sys::boostedTick()
+                          << std::endl;
+            }
+            pass_counter++;
+            current_state = LoopState::Forward_Pass;
+        } else {
+            current_state = LoopState::Input_Gradient;
+        }
+        generator->register_event(this, EventType::General, NULL, 1);
+        return;
+    } else if (current_state == LoopState::Input_Gradient) {
+        if (delay_loaded == false) {
+            counter = layers[index]->get_input_grad_compute();
+            delay_loaded = true;
+        }
+        if (counter > 0) {
+            generator->try_register_event(this, EventType::Workload_Wait, NULL, counter);
+            return;
+        }
+        if (!collective_issued && index > 0) {
+            collective_issued = true;
+            layers[index]->issue_input_grad_comm(false, true, true, SchedulingPolicy::LIFO,
                                                  CollectiveBarrier::Non_Blocking);
         }
         collective_issued = false;
@@ -1365,8 +1468,10 @@ void Workload::initialize_workload(std::string name) {
     }
     else if (type == "MODEL") {
         parallelismPolicy = ParallelismPolicy::Model;
-    }else if (type == "HYBRID") {
-        parallelismPolicy = ParallelismPolicy::Hybrid;
+    }else if (type == "HYBRID_DATA_MODEL") {
+        parallelismPolicy = ParallelismPolicy::HybridDataModel;
+    }else if (type == "HYBRID_MODEL_DATA") {
+        parallelismPolicy = ParallelismPolicy::HybridModelData;
     }else if (type == "MICRO") {
         parallelismPolicy = ParallelismPolicy::MicroBenchmark;
     }
