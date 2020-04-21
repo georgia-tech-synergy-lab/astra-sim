@@ -639,7 +639,7 @@ void StreamBaseline::call(EventType event,CallData *data){
         update_bus_stats(BusType::Both,sharedBusStat);
         my_current_phase.algorithm->run(EventType::General,data);
         if(data!=NULL){
-            delete data;
+            delete sharedBusStat;
         }
     }
 }

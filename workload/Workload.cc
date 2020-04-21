@@ -248,6 +248,7 @@ void Layer::call(EventType event,CallData *mdata){
         return;
     }
     int data=((IntData*)mdata)->data;
+    IntData *intData=((IntData*)mdata);
     if(event==EventType::Wight_Grad_Comm_Finished_After_Delay){
         if(generator->id==0){
             std::cout<<"***** info: weight gradient collective for layer: "<<id<<" is finished************"<<std::endl;
@@ -261,7 +262,7 @@ void Layer::call(EventType event,CallData *mdata){
             weight_grad_datasets.erase(data);
             workload->call(EventType::General,NULL);
             generator->increase_finished_streams(dataset_streams);
-            delete mdata;
+            delete intData;
             return;
         }
         else if(started_waiting_for_weight_grad.size()>0){
@@ -273,7 +274,7 @@ void Layer::call(EventType event,CallData *mdata){
             weight_grad_datasets.erase(data);
             workload->call(EventType::General,NULL);
             generator->increase_finished_streams(dataset_streams);
-            delete mdata;
+            delete intData;
             return;
         }
         update_stream_stats(weight_grad_datasets[data]);
@@ -281,7 +282,7 @@ void Layer::call(EventType event,CallData *mdata){
         delete weight_grad_datasets[data];
         weight_grad_datasets.erase(data);
         generator->increase_finished_streams(dataset_streams);
-        delete mdata;
+        delete intData;
         return;
     }
     else if(event==EventType::Input_Grad_Comm_Finished_After_Delay){
@@ -297,7 +298,7 @@ void Layer::call(EventType event,CallData *mdata){
             input_grad_datasets.erase(data);
             workload->call(EventType::General,NULL);
             generator->increase_finished_streams(dataset_streams);
-            delete mdata;
+            delete intData;
             return;
         }
         else if(started_waiting_for_input_grad.size()>0){
@@ -309,7 +310,7 @@ void Layer::call(EventType event,CallData *mdata){
             input_grad_datasets.erase(data);
             workload->call(EventType::General,NULL);
             generator->increase_finished_streams(dataset_streams);
-            delete mdata;
+            delete intData;
             return;
         }
         update_stream_stats(input_grad_datasets[data]);
@@ -317,7 +318,7 @@ void Layer::call(EventType event,CallData *mdata){
         delete input_grad_datasets[data];
         input_grad_datasets.erase(data);
         generator->increase_finished_streams(dataset_streams);
-        delete mdata;
+        delete intData;
         return;
     }
     else if(event==EventType::Fwd_Comm_Finished_After_Delay){
@@ -333,7 +334,7 @@ void Layer::call(EventType event,CallData *mdata){
             fwd_pass_datasets.erase(data);
             workload->call(EventType::General,NULL);
             generator->increase_finished_streams(dataset_streams);
-            delete mdata;
+            delete intData;
             return;
         }
         else if(started_waiting_for_fwd_pass.size()>0){
@@ -348,7 +349,7 @@ void Layer::call(EventType event,CallData *mdata){
             fwd_pass_datasets.erase(data);
             workload->call(EventType::General,NULL);
             generator->increase_finished_streams(dataset_streams);
-            delete mdata;
+            delete intData;
             return;
         }
         update_stream_stats(fwd_pass_datasets[data]);
@@ -356,7 +357,7 @@ void Layer::call(EventType event,CallData *mdata){
         delete fwd_pass_datasets[data];
         fwd_pass_datasets.erase(data);
         generator->increase_finished_streams(dataset_streams);
-        delete mdata;
+        delete intData;
         return;
     }
 }
